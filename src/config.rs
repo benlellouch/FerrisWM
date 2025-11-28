@@ -18,4 +18,14 @@ pub static ACTION_MAPPINGS: &[ActionMapping] = &[
         modifiers: &[ModMask::SHIFT],
         action: ActionEvent::KillClient,
     },
+    ActionMapping {
+        key: xkb::Keysym::j,
+        modifiers: &[ModMask::SHIFT],
+        action: ActionEvent::FocusNext,
+    },
+    ActionMapping {
+        key: xkb::Keysym::k,
+        modifiers: &[ModMask::SHIFT],
+        action: ActionEvent::FocusPrev,
+    },
 ];

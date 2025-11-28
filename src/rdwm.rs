@@ -10,6 +10,7 @@ use crate::key_mapping::ActionEvent;
 pub struct WindowManager {
     conn: Connection,
     windows: Vec<Window>,
+    focus: usize,
     key_bindings: HashMap<(u8, ModMask), ActionEvent>,
     screen_width: u32,
     screen_height: u32,
@@ -38,6 +39,7 @@ impl WindowManager {
         let mut wm = WindowManager {
             conn,
             windows: vec![],
+            focus: 0,
             key_bindings: HashMap::new(),
             screen_width: 0,
             screen_height: 0,
@@ -130,33 +132,12 @@ impl WindowManager {
 
         if let Some(action) = self.key_bindings.get(&(keycode, modifiers)) {
             match action {
-                ActionEvent::Spawn(cmd) => {
-                    println!("Spawning command: {}", cmd);
-
-                    match Command::new(cmd).spawn() {
-                        Ok(_) => println!("Successfully spawned: {}", cmd),
-                        Err(e) => println!("Failed to spawn {}: {:?}", cmd, e),
-                    }
-                }
-                ActionEvent::KillClient => {
-                    let window_to_kill: Option<Window> = self.windows.pop();
-                    match window_to_kill {
-                        Some(win) => {
-                            println!("Killing client window: {:?}", win);
-
-                            // Send KillClient request
-                            match self.conn.send_and_check_request(&x::KillClient { resource: win.resource_id() }) {
-                                Ok(_) => println!("Successfully killed window: {:?}", win),
-                                Err(e) => println!("Failed to kill window {:?}: {:?}", win, e),
-                            }
-
-                            // Reconfigure remaining windows
-                            self.configure_windows();
-                        }
-                        None => {
-                            println!("No windows to kill");
-                        }
-                    }
+                ActionEvent::Spawn(cmd) => self.spawn_client(cmd),
+                ActionEvent::KillClient => self.kill_client(),
+                ActionEvent::FocusNext => self.shift_focus(1),
+                ActionEvent::FocusPrev => self.shift_focus(-1),
+                _ => {
+                    println!("Action {:?} not implemented yet", action);
                 }
             }
         } else {
@@ -165,6 +146,43 @@ impl WindowManager {
                 keycode, modifiers
             );
         }
+    }
+
+    fn spawn_client(&self, cmd: &str) {
+        println!("Spawning command: {}", cmd);
+        match Command::new(cmd).spawn() {
+            Ok(_) => println!("Successfully spawned: {}", cmd),
+            Err(e) => println!("Failed to spawn {}: {:?}", cmd, e),
+        }
+    }
+
+    fn kill_client(&mut self) {
+        if self.focus < self.windows.len() {
+            let window_to_kill = self.windows.remove(self.focus as usize);
+            println!("Killing client window: {:?}", window_to_kill);
+
+            // Send KillClient request
+            match self.conn.send_and_check_request(&x::KillClient { resource: window_to_kill.resource_id() }) {
+                Ok(_) => println!("Successfully killed window: {:?}", window_to_kill),
+                Err(e) => println!("Failed to kill window {:?}: {:?}", window_to_kill, e),
+            }
+
+            // Reconfigure remaining windows
+            self.configure_windows();
+        } else {
+            println!("No windows to kill");
+        }
+    }
+
+    fn shift_focus(&mut self, direction: isize) {
+        if self.windows.is_empty() {
+            println!("No windows to focus");
+            return;
+        }
+
+        let window_count = self.windows.len() as isize;
+        self.focus = ((self.focus as isize + direction + window_count) % window_count) as usize;
+        println!("Focus shifted to window index: {}", self.focus);
     }
         
 

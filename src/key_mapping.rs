@@ -10,4 +10,6 @@ pub struct ActionMapping {
 pub enum ActionEvent {
     Spawn(&'static str),
     KillClient,
+    FocusNext,
+    FocusPrev,
 }
