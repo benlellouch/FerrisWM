@@ -12,4 +12,5 @@ pub enum ActionEvent {
     KillClient,
     FocusNext,
     FocusPrev,
+    Workspace(usize),
 }

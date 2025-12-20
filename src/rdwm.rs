@@ -1,4 +1,3 @@
-use core::time;
 use std::collections::HashMap;
 use std::process::Command;
 use xcb::{
@@ -11,8 +10,9 @@ use crate::key_mapping::ActionEvent;
 
 pub struct WindowManager {
     conn: Connection,
-    windows: Vec<Window>,
+    windows: [Vec<Window>; 10],
     focus: usize,
+    workspace: usize,
     key_bindings: HashMap<(u8, ModMask), ActionEvent>,
     screen_width: u32,
     screen_height: u32,
@@ -42,7 +42,8 @@ impl WindowManager {
 
         let mut wm = WindowManager {
             conn,
-            windows: vec![],
+            windows: Default::default(),
+            workspace: 0,
             focus: 0,
             key_bindings: HashMap::new(),
             screen_width: 0,
@@ -116,7 +117,7 @@ impl WindowManager {
     }
 
     fn configure_windows(&self) {
-        let window_count = self.windows.len() as u32;
+        let window_count = self.windows[self.workspace].len() as u32;
         if window_count == 0 {
             return;
         }
@@ -126,7 +127,7 @@ impl WindowManager {
         let inner_w = (cell - 2 * border_width).max(1);
         let inner_h = ((self.screen_height as i32) - 2 * border_width).max(1);
 
-        for (i, win) in self.windows.iter().enumerate() {
+        for (i, win) in self.windows[self.workspace].iter().enumerate() {
             let x = i as i32 * cell;
             let y = 0;
             if let Err(e) = self.configure_window(*win, x, y, inner_w as u32, inner_h as u32) {
@@ -145,6 +146,7 @@ impl WindowManager {
                 ActionEvent::KillClient => self.kill_client(),
                 ActionEvent::FocusNext => self.shift_focus(1),
                 ActionEvent::FocusPrev => self.shift_focus(-1),
+                ActionEvent::Workspace(workspace) => self.change_workspace(*workspace),
                 _ => {
                     println!("Action {:?} not implemented yet", action);
                 }
@@ -167,7 +169,7 @@ impl WindowManager {
 
     fn kill_client(&mut self) {
         if self.focus < self.windows.len() {
-            let window_to_kill = self.windows.remove(self.focus as usize);
+            let window_to_kill = self.windows[self.workspace].remove(self.focus as usize);
             println!("Killing client window: {:?}", window_to_kill);
 
             // Send KillClient request
@@ -192,18 +194,18 @@ impl WindowManager {
             return;
         }
 
-        let window_count = self.windows.len() as isize;
+        let window_count = self.windows[self.workspace].len() as isize;
         let next_focus: usize =
             ((self.focus as isize + direction + window_count) % window_count) as usize;
-        let next_window = self.windows[next_focus];
+        let next_window = self.windows[self.workspace][next_focus];
         self.set_focus(next_window);
         self.focus = next_focus;
         println!("Focus shifted to window index: {}", self.focus);
     }
 
     fn set_focus(&self, window: Window) {
-        if self.focus < self.windows.len() {
-            let current = self.windows[self.focus];
+        if self.focus < self.windows[self.workspace].len() {
+            let current = self.windows[self.workspace][self.focus];
             self.set_window_border(current, self.normal_border_pixel, self.border_width);
         }
 
@@ -212,6 +214,32 @@ impl WindowManager {
             revert_to: x::InputFocus::PointerRoot,
             focus: window,
             time: 0,
+        });
+    }
+
+    fn change_workspace(&mut self, new_workspace: usize) {
+        let old_wspace_cookies: Vec<_> = self.windows[self.workspace]
+            .iter()
+            .map(|win| {
+                self.conn
+                    .send_request_checked(&x::UnmapWindow { window: *win })
+            })
+            .collect();
+
+        self.workspace = new_workspace;
+        let new_wspace_cookies: Vec<_> = self.windows[self.workspace]
+            .iter()
+            .map(|win| {
+                self.conn
+                    .send_request_checked(&x::MapWindow { window: *win })
+            })
+            .collect();
+
+        old_wspace_cookies.into_iter().for_each(|cookie| {
+            let _ = self.conn.check_request(cookie);
+        });
+        new_wspace_cookies.into_iter().for_each(|cookie| {
+            let _ = self.conn.check_request(cookie);
         });
     }
 
@@ -231,7 +259,7 @@ impl WindowManager {
 
     fn handle_map_request(&mut self, window: Window) {
         // push new window to list
-        self.windows.push(window);
+        self.windows[self.workspace].push(window);
 
         self.configure_windows();
 
@@ -243,7 +271,15 @@ impl WindowManager {
         }
 
         self.set_focus(window);
-        self.focus = self.windows.len() - 1;
+        self.focus = self.windows[self.workspace].len() - 1;
+    }
+
+    fn handle_destroy_event(&mut self, window: Window) {
+        if self.windows[self.workspace][self.focus].resource_id() == window.resource_id() {
+            self.shift_focus(-1);
+        }
+        self.windows[self.workspace].retain(|&win| win.resource_id() != window.resource_id());
+        self.configure_windows();
     }
 
     fn set_substructure_redirect(&self, root: Window) -> Result<(), ProtocolError> {
@@ -301,6 +337,10 @@ impl WindowManager {
                     println!("  Requested size: {}x{}", ev.width(), ev.height());
 
                     // Check if this is a new window
+                }
+
+                xcb::Event::X(x::Event::DestroyNotify(ev)) => {
+                    self.handle_destroy_event(ev.window());
                 }
 
                 xcb::Event::X(x::Event::MapNotify(ev)) => {
