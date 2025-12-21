@@ -2,6 +2,7 @@ mod config;
 mod key_mapping;
 mod ewmh;
 mod atoms;
+mod keyboard;
 mod rdwm;
 mod workspace;
 

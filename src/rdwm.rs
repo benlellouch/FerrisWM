@@ -1,4 +1,4 @@
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use std::collections::HashMap;
 use std::process::Command;
 use xcb::{
@@ -6,9 +6,10 @@ use xcb::{
     Connection, ProtocolError, VoidCookieChecked, Xid,
 };
 
-use crate::config::{ACTION_MAPPINGS, DEFAULT_BORDER_WIDTH, NUM_WORKSPACES};
+use crate::config::{DEFAULT_BORDER_WIDTH, NUM_WORKSPACES};
 use crate::key_mapping::ActionEvent;
 use crate::atoms::Atoms;
+use crate::keyboard::{fetch_keyboard_mapping, populate_key_bindings, set_keygrabs};
 use crate::workspace::Workspace;
 
 pub struct ScreenConfig {
@@ -73,7 +74,7 @@ impl WindowManager {
         info!("Successfully set substructure redirect");
 
         // Set up key grabs
-        wm.set_keygrabs();
+        set_keygrabs(&wm.conn, &wm.key_bindings, wm.root_window());
 
         // Set up EWMH hints
         wm.publish_ewmh_hints();
@@ -96,8 +97,8 @@ impl WindowManager {
     fn initialize_config(
         conn: &Connection,
     ) -> Result<WindowManagerConfig, Box<dyn std::error::Error>> {
-        let (keysyms, keysyms_per_keycode) = Self::fetch_keyboard_mapping(conn);
-        let key_bindings = Self::populate_key_bindings(conn, &keysyms, keysyms_per_keycode);
+        let (keysyms, keysyms_per_keycode) = fetch_keyboard_mapping(conn);
+        let key_bindings = populate_key_bindings(conn, &keysyms, keysyms_per_keycode);
         let screen_config = Self::setup_screen(conn);
         let atoms = Atoms::initialize(conn);
         let root_window = Self::get_root_window(conn);
@@ -110,52 +111,7 @@ impl WindowManager {
         })
     }
 
-    fn fetch_keyboard_mapping(conn: &Connection) -> (Vec<u32>, usize) {
-        if let Ok(keyboard_mapping) =
-            conn.wait_for_reply(conn.send_request(&x::GetKeyboardMapping {
-                first_keycode: conn.get_setup().min_keycode(),
-                count: conn.get_setup().max_keycode() - conn.get_setup().min_keycode() + 1,
-            }))
-        {
-            let keysyms_per_keycode = keyboard_mapping.keysyms_per_keycode() as usize;
-            let keysyms = keyboard_mapping.keysyms().to_vec();
-            (keysyms, keysyms_per_keycode)
-        } else {
-            warn!("Failed to get keyboard mapping, using empty keysyms");
-            (vec![], 0)
-        }
-    }
-
-    fn populate_key_bindings(
-        conn: &Connection,
-        keysyms: &[u32],
-        keysyms_per_keycode: usize,
-    ) -> HashMap<(u8, ModMask), ActionEvent> {
-        let mut key_bindings = HashMap::new();
-
-        for mapping in ACTION_MAPPINGS {
-            let modifiers = mapping
-                .modifiers
-                .iter()
-                .copied()
-                .reduce(|acc, modkey| acc | modkey)
-                .unwrap_or(xcb::x::ModMask::empty());
-
-            for (i, chunk) in keysyms.chunks(keysyms_per_keycode).enumerate() {
-                if chunk.contains(&mapping.key.raw()) {
-                    let keycode = conn.get_setup().min_keycode() + i as u8;
-                    key_bindings.insert((keycode, modifiers), mapping.action);
-                    info!(
-                        "Mapped key {:?} (keycode: {}) with modifiers {:?} to action: {:?}",
-                        mapping.key, keycode, modifiers, mapping.action
-                    );
-                    break;
-                }
-            }
-        }
-
-        key_bindings
-    }
+    
 
     fn setup_screen(conn: &Connection) -> ScreenConfig {
         let root = conn.get_setup().roots().next().expect("Cannot find root");
@@ -211,24 +167,7 @@ impl WindowManager {
             })
     }
 
-    fn set_keygrabs(&self) {
-        for &(keycode, modifiers) in self.key_bindings.keys() {
-            match self.conn.send_and_check_request(&x::GrabKey {
-                owner_events: false,
-                grab_window: self.root_window(),
-                modifiers,
-                key: keycode,
-                pointer_mode: x::GrabMode::Async,
-                keyboard_mode: x::GrabMode::Async,
-            }) {
-                Ok(_) => info!(
-                    "Successfully grabbed key: keycode {} with modifiers {:?}",
-                    keycode, modifiers
-                ),
-                Err(e) => warn!("Failed to grab key {}: {:?}", keycode, e),
-            }
-        }
-    }
+    
 
 
 
