@@ -34,3 +34,24 @@ Notes
 - Configure key bindings and behavior in `src/config.rs` and `src/key_mapping.rs`.
 - Logging uses the `log` and `env_logger` crates; run with `RUST_LOG=debug` to see debug output.
 - This project is experimental — use in a nested session (Xephyr) for testing before using as your main window manager.
+
+## TODO
+
+- [x] Horizontal tiling with even spacing across visible windows
+- [x] Multiple workspaces (configurable via `NUM_WORKSPACES`)
+- [x] Keyboard-driven controls: spawn apps, kill focused client, focus next/previous, switch workspaces
+- [x] Lightweight, minimal dependencies (`xcb`, `xkbcommon`) and simple configuration in `src/config.rs`
+- [x] Basic logging via `log` + `env_logger`
+- [ ] Move windows around within a workspace 
+- [ ] Resize windows interactively
+- [ ] Move windows between workspaces
+- [ ] Add EWMH (NETWM) / ICCCM hints for better compatibility with external panels/status bars and desktop tools
+- [ ] Create a custom status bar (or integration points) so you can build your own bar displaying workspaces, layout, and window titles
+- [ ] Additional layouts (stacking, master-stack, dynamic layouts) and configurable gaps
+- [ ] Improved multi-monitor support and per-monitor workspaces
+- [ ] More robust error handling and configuration parsing
+
+Contributing
+
+- Feel free to open issues or PRs for features above. Small, focused patches are easiest to review.
+
