@@ -4,14 +4,16 @@ mod rdwm;
 mod workspace;
 
 fn main() {
+    env_logger::init();
+
     match rdwm::WindowManager::new() {
         Ok(mut wm) => {
             if let Err(e) = wm.run() {
-                eprintln!("Window manager runtime error: {:?}", e);
+                log::error!("Window manager runtime error: {:?}", e);
             }
         }
         Err(e) => {
-            eprintln!("Failed to initialize window manager: {:?}", e);
+            log::error!("Failed to initialize window manager: {:?}", e);
         }
     }
 }

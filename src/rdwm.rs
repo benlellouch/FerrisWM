@@ -1,3 +1,4 @@
+use log::{debug, error, info, warn};
 use std::collections::HashMap;
 use std::process::Command;
 use xcb::{
@@ -24,21 +25,9 @@ pub struct WindowManager {
 impl WindowManager {
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
         let (conn, _) = Connection::connect(None)?;
-        println!("Connected to X.");
+        info!("Connected to X.");
 
-        // Get keyboard mapping from X server
-        let (keysyms, keysyms_per_keycode) = if let Ok(keyboard_mapping) =
-            conn.wait_for_reply(conn.send_request(&x::GetKeyboardMapping {
-                first_keycode: conn.get_setup().min_keycode(),
-                count: conn.get_setup().max_keycode() - conn.get_setup().min_keycode() + 1,
-            })) {
-            let keysyms_per_keycode = keyboard_mapping.keysyms_per_keycode() as usize;
-            let keysyms = keyboard_mapping.keysyms().to_vec();
-            (keysyms, keysyms_per_keycode)
-        } else {
-            println!("Failed to get keyboard mapping, using empty keysyms");
-            (vec![], 0)
-        };
+        let (keysyms, keysyms_per_keycode) = Self::fetch_keyboard_mapping(&conn);
 
         let mut wm = WindowManager {
             conn,
@@ -49,10 +38,49 @@ impl WindowManager {
             screen_height: 0,
             focused_border_pixel: 0,
             normal_border_pixel: 0,
-            border_width: DEFAULT_BORDER_WIDTH, // choose desired border thickness
+            border_width: DEFAULT_BORDER_WIDTH,
         };
 
-        // Create key bindings HashMap
+        wm.populate_key_bindings(&keysyms, keysyms_per_keycode);
+
+        let root = wm.setup_screen()?;
+
+        // Get root window and set up substructure redirect
+        wm.set_substructure_redirect(root)?;
+        info!("Successfully set substructure redirect");
+
+        // Set up key grabs
+        wm.set_keygrabs(root);
+
+        Ok(wm)
+    }
+
+    /*
+     _   _ _______        __  _   _ _____ _     ____  _____ ____  ____
+    | \ | | ____\ \      / / | | | | ____| |   |  _ \| ____|  _ \/ ___|
+    |  \| |  _|  \ \ /\ / /  | |_| |  _| | |   | |_) |  _| | |_) \___ \
+    | |\  | |___  \ V  V /   |  _  | |___| |___|  __/| |___|  _ < ___) |
+    |_| \_|_____|  \_/\_/    |_| |_|_____|_____|_|   |_____|_| \_\____/
+
+    */
+
+    fn fetch_keyboard_mapping(conn: &Connection) -> (Vec<u32>, usize) {
+        if let Ok(keyboard_mapping) =
+            conn.wait_for_reply(conn.send_request(&x::GetKeyboardMapping {
+                first_keycode: conn.get_setup().min_keycode(),
+                count: conn.get_setup().max_keycode() - conn.get_setup().min_keycode() + 1,
+            }))
+        {
+            let keysyms_per_keycode = keyboard_mapping.keysyms_per_keycode() as usize;
+            let keysyms = keyboard_mapping.keysyms().to_vec();
+            (keysyms, keysyms_per_keycode)
+        } else {
+            warn!("Failed to get keyboard mapping, using empty keysyms");
+            (vec![], 0)
+        }
+    }
+
+    fn populate_key_bindings(&mut self, keysyms: &[u32], keysyms_per_keycode: usize) {
         for mapping in ACTION_MAPPINGS {
             let modifiers = mapping
                 .modifiers
@@ -61,12 +89,12 @@ impl WindowManager {
                 .reduce(|acc, modkey| acc | modkey)
                 .unwrap_or(xcb::x::ModMask::empty());
 
-            // Find keycode for this keysym
             for (i, chunk) in keysyms.chunks(keysyms_per_keycode).enumerate() {
                 if chunk.contains(&mapping.key.raw()) {
-                    let keycode = wm.conn.get_setup().min_keycode() + i as u8;
-                    wm.key_bindings.insert((keycode, modifiers), mapping.action);
-                    println!(
+                    let keycode = self.conn.get_setup().min_keycode() + i as u8;
+                    self.key_bindings
+                        .insert((keycode, modifiers), mapping.action);
+                    info!(
                         "Mapped key {:?} (keycode: {}) with modifiers {:?} to action: {:?}",
                         mapping.key, keycode, modifiers, mapping.action
                     );
@@ -74,23 +102,22 @@ impl WindowManager {
                 }
             }
         }
+    }
 
-        let root_screen = wm.conn.get_setup().roots().next().unwrap();
-        wm.screen_width = root_screen.width_in_pixels() as u32;
-        wm.screen_height = root_screen.height_in_pixels() as u32;
+    fn setup_screen(&mut self) -> Result<Window, Box<dyn std::error::Error>> {
+        let root_screen = self
+            .conn
+            .get_setup()
+            .roots()
+            .next()
+            .ok_or("No screen found")?;
+        self.screen_width = root_screen.width_in_pixels() as u32;
+        self.screen_height = root_screen.height_in_pixels() as u32;
 
-        wm.focused_border_pixel = root_screen.white_pixel();
-        wm.normal_border_pixel = root_screen.black_pixel();
+        self.focused_border_pixel = root_screen.white_pixel();
+        self.normal_border_pixel = root_screen.black_pixel();
 
-        // Get root window and set up substructure redirect
-        let root = root_screen.root();
-        wm.set_substructure_redirect(root)?;
-        println!("Successfully set substructure redirect");
-
-        // Set up key grabs
-        wm.set_keygrabs(root);
-
-        Ok(wm)
+        Ok(root_screen.root())
     }
 
     fn set_substructure_redirect(&self, root: Window) -> Result<(), ProtocolError> {
@@ -116,14 +143,23 @@ impl WindowManager {
                 pointer_mode: x::GrabMode::Async,
                 keyboard_mode: x::GrabMode::Async,
             }) {
-                Ok(_) => println!(
+                Ok(_) => info!(
                     "Successfully grabbed key: keycode {} with modifiers {:?}",
                     keycode, modifiers
                 ),
-                Err(e) => println!("Failed to grab key {}: {:?}", keycode, e),
+                Err(e) => warn!("Failed to grab key {}: {:?}", keycode, e),
             }
         }
     }
+
+    /*
+    __        _____ _   _ ____   _____        __  _   _ _____ _     ____  _____ ____  ____
+    \ \      / /_ _| \ | |  _ \ / _ \ \      / / | | | | ____| |   |  _ \| ____|  _ \/ ___|
+     \ \ /\ / / | ||  \| | | | | | | \ \ /\ / /  | |_| |  _| | |   | |_) |  _| | |_) \___ \
+      \ V  V /  | || |\  | |_| | |_| |\ V  V /   |  _  | |___| |___|  __/| |___|  _ < ___) |
+       \_/\_/  |___|_| \_|____/ \___/  \_/\_/    |_| |_|_____|_____|_|   |_____|_| \_\____/
+
+    */
 
     fn current_workspace_mut(&mut self) -> &mut Workspace {
         self.workspaces
@@ -162,7 +198,7 @@ impl WindowManager {
     fn configure_windows(&self) {
         let window_count = self.current_workspace().num_of_windows() as u32;
         if window_count == 0 {
-            println!("No windows to configure");
+            debug!("No windows to configure");
             return;
         }
 
@@ -188,28 +224,27 @@ impl WindowManager {
     }
 
     fn set_focus(&mut self, idx: usize) {
-        // Reset border on old focused window
-        self.set_window_border(
-            *self.current_workspace().get_focused_window(),
-            self.normal_border_pixel,
-            self.border_width,
-        );
-
-        println!("Reset border on old focused window");
+        // Reset border on old focused window (if any)
+        if let Some(old) = self.current_workspace().get_focused_window().copied() {
+            self.set_window_border(old, self.normal_border_pixel, self.border_width);
+            debug!("Reset border on old focused window");
+        }
 
         self.current_workspace_mut().set_focus(idx);
-        // Set border on window to be focused
-        let new_focus_window = *self.current_workspace().get_focused_window();
-        self.set_window_border(
-            new_focus_window,
-            self.focused_border_pixel,
-            self.border_width,
-        );
-        let _ = self.conn.send_and_check_request(&x::SetInputFocus {
-            revert_to: x::InputFocus::PointerRoot,
-            focus: new_focus_window,
-            time: 0,
-        });
+
+        // Set border on window to be focused (if present)
+        if let Some(new_focus_window) = self.current_workspace().get_focused_window().copied() {
+            self.set_window_border(
+                new_focus_window,
+                self.focused_border_pixel,
+                self.border_width,
+            );
+            let _ = self.conn.send_and_check_request(&x::SetInputFocus {
+                revert_to: x::InputFocus::PointerRoot,
+                focus: new_focus_window,
+                time: 0,
+            });
+        }
     }
 
     fn set_window_border(&self, window: Window, pixel: u32, width: u32) {
@@ -236,23 +271,23 @@ impl WindowManager {
     */
 
     fn spawn_client(&self, cmd: &str) {
-        println!("Spawning command: {}", cmd);
+        info!("Spawning command: {}", cmd);
         match Command::new(cmd).spawn() {
-            Ok(_) => println!("Successfully spawned: {}", cmd),
-            Err(e) => println!("Failed to spawn {}: {:?}", cmd, e),
+            Ok(_) => info!("Successfully spawned: {}", cmd),
+            Err(e) => error!("Failed to spawn {}: {:?}", cmd, e),
         }
     }
 
     fn kill_client(&mut self) {
         if let Some(window_to_kill) = self.current_workspace_mut().removed_focused_window() {
-            println!("Killing client window: {:?}", window_to_kill);
+            info!("Killing client window: {:?}", window_to_kill);
 
             // Send KillClient request
             match self.conn.send_and_check_request(&x::KillClient {
                 resource: window_to_kill.resource_id(),
             }) {
-                Ok(_) => println!("Successfully killed window: {:?}", window_to_kill),
-                Err(e) => println!("Failed to kill window {:?}: {:?}", window_to_kill, e),
+                Ok(_) => info!("Successfully killed window: {:?}", window_to_kill),
+                Err(e) => error!("Failed to kill window {:?}: {:?}", window_to_kill, e),
             }
 
             // Reconfigure remaining workspaces
@@ -266,14 +301,14 @@ impl WindowManager {
         let window_count = curr_workspace.num_of_windows() as isize;
 
         if window_count == 0 {
-            println!("No windows to focus");
+            debug!("No windows to focus");
             return;
         }
 
-        let next_focus: usize = ((curr_workspace.get_focus() as isize + direction + window_count)
-            % window_count) as usize;
+        let curr = curr_workspace.get_focus().unwrap_or(0) as isize;
+        let next_focus: usize = ((curr + direction).rem_euclid(window_count)) as usize;
 
-        println!("Focus shifted to window index: {}", next_focus);
+        debug!("Focus shifted to window index: {}", next_focus);
         self.set_focus(next_focus);
     }
 
@@ -346,65 +381,65 @@ impl WindowManager {
         match self.conn.send_and_check_request(&x::MapWindow { window }) {
             Ok(_) => (),
             Err(e) => {
-                println!("Failed to map window {:?}: {:?}", window, e);
+                error!("Failed to map window {:?}: {:?}", window, e);
             }
         }
-        self.set_focus(self.current_workspace().num_of_windows() - 1);
+        let idx = self.current_workspace().num_of_windows().saturating_sub(1);
+        self.set_focus(idx);
     }
 
     fn handle_destroy_event(&mut self, window: Window) {
         let curr_workspace = self.current_workspace_mut();
 
         if curr_workspace.num_of_windows() == 0 {
-            println!("No window to destroy");
+            debug!("No window to destroy");
             return;
         }
 
         curr_workspace.retain(|&win| win.resource_id() != window.resource_id());
 
-        if curr_workspace.get_focused_window().resource_id() == window.resource_id() {
-            self.shift_focus(-1);
+        if let Some(focused) = curr_workspace.get_focused_window() {
+            if focused.resource_id() == window.resource_id() {
+                self.shift_focus(-1);
+            }
         }
 
         self.configure_windows();
     }
 
+    /*
+     __  __    _    ___ _   _   _     ___   ___  ____
+    |  \/  |  / \  |_ _| \ | | | |   / _ \ / _ \|  _ \
+    | |\/| | / _ \  | ||  \| | | |  | | | | | | | |_) |
+    | |  | |/ ___ \ | || |\  | | |__| |_| | |_| |  __/
+    |_|  |_/_/   \_\___|_| \_| |_____\___/ \___/|_|
+
+    */
+
     pub fn run(&mut self) -> xcb::Result<()> {
         loop {
             match self.conn.wait_for_event()? {
                 xcb::Event::X(x::Event::KeyPress(ev)) => {
-                    println!("Received KeyPress event: {:?}", ev);
+                    debug!("Received KeyPress event: {:?}", ev);
                     self.handle_key_press(&ev);
                 }
 
                 xcb::Event::X(x::Event::MapRequest(ev)) => {
-                    println!("Received MapRequest event for window: {:?}", ev.window());
+                    debug!("Received MapRequest event for window: {:?}", ev.window());
                     self.handle_map_request(ev.window());
                 }
 
-                xcb::Event::X(x::Event::ConfigureRequest(ev)) => {
-                    println!(
-                        "Received ConfigureRequest event for window: {:?}",
-                        ev.window()
-                    );
-                    println!("  Parent: {:?}", ev.parent());
-                    println!("  Requested position: ({}, {})", ev.x(), ev.y());
-                    println!("  Requested size: {}x{}", ev.width(), ev.height());
-
-                    // Check if this is a new window
-                }
-
                 xcb::Event::X(x::Event::DestroyNotify(ev)) => {
-                    println!("Received DestroyNotify event for window {:?}", ev.window());
+                    debug!("Received DestroyNotify event for window {:?}", ev.window());
                     self.handle_destroy_event(ev.window());
                 }
 
                 xcb::Event::X(x::Event::MapNotify(ev)) => {
-                    println!("Window mapped: {:?}", ev.window());
+                    debug!("Window mapped: {:?}", ev.window());
                 }
 
                 ev => {
-                    println!("Ignoring event: {:?}", ev);
+                    debug!("Ignoring event: {:?}", ev);
                 }
             }
         }
