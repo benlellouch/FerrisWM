@@ -10,6 +10,25 @@ use crate::config::{ACTION_MAPPINGS, DEFAULT_BORDER_WIDTH, NUM_WORKSPACES};
 use crate::key_mapping::ActionEvent;
 use crate::workspace::Workspace;
 
+pub struct ScreenConfig {
+    pub width: u32,
+    pub height: u32,
+    pub focused_border_pixel: u32,
+    pub normal_border_pixel: u32,
+}
+
+pub struct Atoms {
+    pub net_number_of_desktops: x::Atom,
+    pub net_current_desktop: x::Atom,
+}
+
+pub struct WindowManagerConfig {
+    pub key_bindings: HashMap<(u8, ModMask), ActionEvent>,
+    pub screen_config: ScreenConfig,
+    pub atoms: Atoms,
+    pub root_window: Window,
+}
+
 pub struct WindowManager {
     conn: Connection,
     workspaces: [Workspace; NUM_WORKSPACES],
@@ -20,6 +39,8 @@ pub struct WindowManager {
     focused_border_pixel: u32,
     normal_border_pixel: u32,
     border_width: u32,
+    atoms: Atoms,
+    root_window: Window,
 }
 
 impl WindowManager {
@@ -27,42 +48,64 @@ impl WindowManager {
         let (conn, _) = Connection::connect(None)?;
         info!("Connected to X.");
 
-        let (keysyms, keysyms_per_keycode) = Self::fetch_keyboard_mapping(&conn);
+        // Initialize configuration before creating WindowManager
+        let config = Self::initialize_config(&conn)?;
 
-        let mut wm = WindowManager {
+        let wm = WindowManager {
             conn,
             workspaces: Default::default(),
             workspace: 0,
-            key_bindings: HashMap::new(),
-            screen_width: 0,
-            screen_height: 0,
-            focused_border_pixel: 0,
-            normal_border_pixel: 0,
+            key_bindings: config.key_bindings,
+            screen_width: config.screen_config.width,
+            screen_height: config.screen_config.height,
+            focused_border_pixel: config.screen_config.focused_border_pixel,
+            normal_border_pixel: config.screen_config.normal_border_pixel,
             border_width: DEFAULT_BORDER_WIDTH,
+            atoms: config.atoms,
+            root_window: config.root_window,
         };
 
-        wm.populate_key_bindings(&keysyms, keysyms_per_keycode);
-
-        let root = wm.setup_screen()?;
-
         // Get root window and set up substructure redirect
-        wm.set_substructure_redirect(root)?;
+        wm.set_substructure_redirect()?;
         info!("Successfully set substructure redirect");
 
         // Set up key grabs
-        wm.set_keygrabs(root);
+        wm.set_keygrabs();
+
+        // Set up EWMH hints
+        wm.publish_workspaces();
 
         Ok(wm)
     }
 
     /*
-     _   _ _______        __  _   _ _____ _     ____  _____ ____  ____
-    | \ | | ____\ \      / / | | | | ____| |   |  _ \| ____|  _ \/ ___|
-    |  \| |  _|  \ \ /\ / /  | |_| |  _| | |   | |_) |  _| | |_) \___ \
-    | |\  | |___  \ V  V /   |  _  | |___| |___|  __/| |___|  _ < ___) |
-    |_| \_|_____|  \_/\_/    |_| |_|_____|_____|_|   |_____|_| \_\____/
+
+    ▗▄ ▗▖▗▄▄▄▖▄   ▄     ▗▖ ▗▖▗▄▄▄▖▗▖   ▗▄▄▖ ▗▄▄▄▖▗▄▄▖  ▗▄▖
+    ▐█ ▐▌▐▛▀▀▘█   █     ▐▌ ▐▌▐▛▀▀▘▐▌   ▐▛▀▜▖▐▛▀▀▘▐▛▀▜▌▗▛▀▜
+    ▐▛▌▐▌▐▌   ▜▖█▗▛     ▐▌ ▐▌▐▌   ▐▌   ▐▌ ▐▌▐▌   ▐▌ ▐▌▐▙
+    ▐▌█▐▌▐███ ▐▌█▐▌     ▐███▌▐███ ▐▌   ▐██▛ ▐███ ▐███  ▜█▙
+    ▐▌▐▟▌▐▌   ▐█▀█▌     ▐▌ ▐▌▐▌   ▐▌   ▐▌   ▐▌   ▐▌▝█▖   ▜▌
+    ▐▌ █▌▐▙▄▄▖▐█ █▌     ▐▌ ▐▌▐▙▄▄▖▐▙▄▄▖▐▌   ▐▙▄▄▖▐▌ ▐▌▐▄▄▟▘
+    ▝▘ ▀▘▝▀▀▀▘▝▀ ▀▘     ▝▘ ▝▘▝▀▀▀▘▝▀▀▀▘▝▘   ▝▀▀▀▘▝▘ ▝▀ ▀▀▘
 
     */
+
+    fn initialize_config(
+        conn: &Connection,
+    ) -> Result<WindowManagerConfig, Box<dyn std::error::Error>> {
+        let (keysyms, keysyms_per_keycode) = Self::fetch_keyboard_mapping(conn);
+        let key_bindings = Self::populate_key_bindings(conn, &keysyms, keysyms_per_keycode);
+        let screen_config = Self::setup_screen(conn);
+        let atoms = Self::initialize_atoms(conn);
+        let root_window = Self::get_root_window(conn);
+
+        Ok(WindowManagerConfig {
+            key_bindings,
+            screen_config,
+            atoms,
+            root_window,
+        })
+    }
 
     fn fetch_keyboard_mapping(conn: &Connection) -> (Vec<u32>, usize) {
         if let Ok(keyboard_mapping) =
@@ -80,7 +123,13 @@ impl WindowManager {
         }
     }
 
-    fn populate_key_bindings(&mut self, keysyms: &[u32], keysyms_per_keycode: usize) {
+    fn populate_key_bindings(
+        conn: &Connection,
+        keysyms: &[u32],
+        keysyms_per_keycode: usize,
+    ) -> HashMap<(u8, ModMask), ActionEvent> {
+        let mut key_bindings = HashMap::new();
+
         for mapping in ACTION_MAPPINGS {
             let modifiers = mapping
                 .modifiers
@@ -91,9 +140,8 @@ impl WindowManager {
 
             for (i, chunk) in keysyms.chunks(keysyms_per_keycode).enumerate() {
                 if chunk.contains(&mapping.key.raw()) {
-                    let keycode = self.conn.get_setup().min_keycode() + i as u8;
-                    self.key_bindings
-                        .insert((keycode, modifiers), mapping.action);
+                    let keycode = conn.get_setup().min_keycode() + i as u8;
+                    key_bindings.insert((keycode, modifiers), mapping.action);
                     info!(
                         "Mapped key {:?} (keycode: {}) with modifiers {:?} to action: {:?}",
                         mapping.key, keycode, modifiers, mapping.action
@@ -102,25 +150,49 @@ impl WindowManager {
                 }
             }
         }
+
+        key_bindings
     }
 
-    fn setup_screen(&mut self) -> Result<Window, Box<dyn std::error::Error>> {
-        let root_screen = self
-            .conn
-            .get_setup()
+    fn setup_screen(conn: &Connection) -> ScreenConfig {
+        let root = conn.get_setup().roots().next().expect("Cannot find root");
+        ScreenConfig {
+            width: root.width_in_pixels() as u32,
+            height: root.height_in_pixels() as u32,
+            focused_border_pixel: root.white_pixel(),
+            normal_border_pixel: root.black_pixel(),
+        }
+    }
+
+    fn initialize_atoms(conn: &Connection) -> Atoms {
+        let net_number_of_desktops = Self::intern_atom(conn, "_NET_NUMBER_OF_DESKTOPS");
+        let net_current_desktop = Self::intern_atom(conn, "_NET_CURRENT_DESKTOP");
+
+        Atoms {
+            net_number_of_desktops,
+            net_current_desktop,
+        }
+    }
+
+    fn intern_atom(conn: &Connection, name: &str) -> x::Atom {
+        let cookie = conn.send_request(&x::InternAtom {
+            only_if_exists: false,
+            name: name.as_bytes(),
+        });
+        conn.wait_for_reply(cookie)
+            .expect("If Interning Atom fails we don't want to start the WM")
+            .atom()
+    }
+
+    fn get_root_window(conn: &Connection) -> Window {
+        conn.get_setup()
             .roots()
             .next()
-            .ok_or("No screen found")?;
-        self.screen_width = root_screen.width_in_pixels() as u32;
-        self.screen_height = root_screen.height_in_pixels() as u32;
-
-        self.focused_border_pixel = root_screen.white_pixel();
-        self.normal_border_pixel = root_screen.black_pixel();
-
-        Ok(root_screen.root())
+            .expect("Cannot find root")
+            .root()
     }
 
-    fn set_substructure_redirect(&self, root: Window) -> Result<(), ProtocolError> {
+    fn set_substructure_redirect(&self) -> Result<(), ProtocolError> {
         let values = [Cw::EventMask(
             EventMask::SUBSTRUCTURE_REDIRECT
                 | EventMask::SUBSTRUCTURE_NOTIFY
@@ -128,16 +200,16 @@ impl WindowManager {
         )];
         self.conn
             .send_and_check_request(&x::ChangeWindowAttributes {
-                window: root,
+                window: self.root_window(),
                 value_list: &values,
             })
     }
 
-    fn set_keygrabs(&self, root: Window) {
+    fn set_keygrabs(&self) {
         for &(keycode, modifiers) in self.key_bindings.keys() {
             match self.conn.send_and_check_request(&x::GrabKey {
                 owner_events: false,
-                grab_window: root,
+                grab_window: self.root_window(),
                 modifiers,
                 key: keycode,
                 pointer_mode: x::GrabMode::Async,
@@ -152,14 +224,53 @@ impl WindowManager {
         }
     }
 
+    fn publish_workspaces(&self) {
+        self.set_cardinal32(self.atoms.net_number_of_desktops, &[NUM_WORKSPACES as u32]);
+        self.set_cardinal32(self.atoms.net_current_desktop, &[0 as u32]);
+    }
+
     /*
-    __        _____ _   _ ____   _____        __  _   _ _____ _     ____  _____ ____  ____
-    \ \      / /_ _| \ | |  _ \ / _ \ \      / / | | | | ____| |   |  _ \| ____|  _ \/ ___|
-     \ \ /\ / / | ||  \| | | | | | | \ \ /\ / /  | |_| |  _| | |   | |_) |  _| | |_) \___ \
-      \ V  V /  | || |\  | |_| | |_| |\ V  V /   |  _  | |___| |___|  __/| |___|  _ < ___) |
-       \_/\_/  |___|_| \_|____/ \___/  \_/\_/    |_| |_|_____|_____|_|   |_____|_| \_\____/
+
+    ▗▄▄▄▖▄   ▄▗▄ ▄▖▗▖ ▗▖
+    ▐▛▀▀▘█   █▐█ █▌▐▌ ▐▌
+    ▐▌   ▜▖█▗▛▐███▌▐▌ ▐▌
+    ▐███ ▐▌█▐▌▐▌█▐▌▐███▌
+    ▐▌   ▐█▀█▌▐▌▀▐▌▐▌ ▐▌
+    ▐▙▄▄▖▐█ █▌▐▌ ▐▌▐▌ ▐▌
+    ▝▀▀▀▘▝▀ ▀▘▝▘ ▝▘▝▘ ▝▘
 
     */
+
+    fn update_current_workspace(&self) {
+        self.set_cardinal32(self.atoms.net_current_desktop, &[self.workspace as u32]);
+    }
+
+    fn set_cardinal32(&self, prop: x::Atom, values: &[u32]) {
+        self.conn.send_request(&x::ChangeProperty {
+            mode: x::PropMode::Replace,
+            window: self.root_window(),
+            property: prop,
+            r#type: x::ATOM_CARDINAL, // CARDINAL
+            data: values,
+        });
+    }
+
+    /*
+
+    ▗▖ ▗▖▗▄▄▄▖ ▄▄▄ ▗▖    ▗▄▖
+    ▐▌ ▐▌▝▀█▀▘ ▀█▀ ▐▌   ▗▛▀▜
+    ▐▌ ▐▌  █    █  ▐▌   ▐▙
+    ▐▌ ▐▌  █    █  ▐▌    ▜█▙
+    ▐▌ ▐▌  █    █  ▐▌      ▜▌
+    ▝█▄█▘  █   ▄█▄ ▐▙▄▄▖▐▄▄▟▘
+     ▝▀▘   ▀   ▀▀▀ ▝▀▀▀▘ ▀▀▘
+
+
+    */
+
+    fn root_window(&self) -> Window {
+        self.root_window
+    }
 
     fn current_workspace_mut(&mut self) -> &mut Workspace {
         self.workspaces
@@ -172,6 +283,18 @@ impl WindowManager {
             .get(self.workspace)
             .expect("Workspace should never be out of bounds")
     }
+
+    /*
+
+    ▄   ▄ ▄▄▄ ▗▄ ▗▖▗▄▄   ▗▄▖ ▄   ▄     ▗▖ ▗▖▗▄▄▄▖▗▖   ▗▄▄▖ ▗▄▄▄▖▗▄▄▖  ▗▄▖
+    █   █ ▀█▀ ▐█ ▐▌▐▛▀█  █▀█ █   █     ▐▌ ▐▌▐▛▀▀▘▐▌   ▐▛▀▜▖▐▛▀▀▘▐▛▀▜▌▗▛▀▜
+    ▜▖█▗▛  █  ▐▛▌▐▌▐▌ ▐▌▐▌ ▐▌▜▖█▗▛     ▐▌ ▐▌▐▌   ▐▌   ▐▌ ▐▌▐▌   ▐▌ ▐▌▐▙
+    ▐▌█▐▌  █  ▐▌█▐▌▐▌ ▐▌▐▌ ▐▌▐▌█▐▌     ▐███▌▐███ ▐▌   ▐██▛ ▐███ ▐███  ▜█▙
+    ▐█▀█▌  █  ▐▌▐▟▌▐▌ ▐▌▐▌ ▐▌▐█▀█▌     ▐▌ ▐▌▐▌   ▐▌   ▐▌   ▐▌   ▐▌▝█▖   ▜▌
+    ▐█ █▌ ▄█▄ ▐▌ █▌▐▙▄█  █▄█ ▐█ █▌     ▐▌ ▐▌▐▙▄▄▖▐▙▄▄▖▐▌   ▐▙▄▄▖▐▌ ▐▌▐▄▄▟▘
+    ▝▀ ▀▘ ▀▀▀ ▝▘ ▀▘▝▀▀   ▝▀▘ ▝▀ ▀▘     ▝▘ ▝▘▝▀▀▀▘▝▀▀▀▘▝▘   ▝▀▀▀▘▝▘ ▝▀ ▀▀▘
+
+    */
 
     fn configure_window(
         &self,
@@ -262,11 +385,14 @@ impl WindowManager {
     }
 
     /*
-        _    ____ _____ ___ ___  _   _   _   _    _    _   _ ____  _     _____ ____  ____
-       / \  / ___|_   _|_ _/ _ \| \ | | | | | |  / \  | \ | |  _ \| |   | ____|  _ \/ ___|
-      / _ \| |     | |  | | | | |  \| | | |_| | / _ \ |  \| | | | | |   |  _| | |_) \___ \
-     / ___ \ |___  | |  | | |_| | |\  | |  _  |/ ___ \| |\  | |_| | |___| |___|  _ < ___) |
-    /_/   \_\____| |_| |___\___/|_| \_| |_| |_/_/   \_\_| \_|____/|_____|_____|_| \_\____/
+
+      ▄    ▄▄ ▗▄▄▄▖ ▄▄▄  ▗▄▖ ▗▄ ▗▖     ▗▖ ▗▖  ▄  ▗▄ ▗▖▗▄▄  ▗▖   ▗▄▄▄▖▗▄▄▖  ▗▄▖
+     ▐█▌  █▀▀▌▝▀█▀▘ ▀█▀  █▀█ ▐█ ▐▌     ▐▌ ▐▌ ▐█▌ ▐█ ▐▌▐▛▀█ ▐▌   ▐▛▀▀▘▐▛▀▜▌▗▛▀▜
+     ▐█▌ ▐▛     █    █  ▐▌ ▐▌▐▛▌▐▌     ▐▌ ▐▌ ▐█▌ ▐▛▌▐▌▐▌ ▐▌▐▌   ▐▌   ▐▌ ▐▌▐▙
+     █ █ ▐▌     █    █  ▐▌ ▐▌▐▌█▐▌     ▐███▌ █ █ ▐▌█▐▌▐▌ ▐▌▐▌   ▐███ ▐███  ▜█▙
+     ███ ▐▙     █    █  ▐▌ ▐▌▐▌▐▟▌     ▐▌ ▐▌ ███ ▐▌▐▟▌▐▌ ▐▌▐▌   ▐▌   ▐▌▝█▖   ▜▌
+    ▗█ █▖ █▄▄▌  █   ▄█▄  █▄█ ▐▌ █▌     ▐▌ ▐▌▗█ █▖▐▌ █▌▐▙▄█ ▐▙▄▄▖▐▙▄▄▖▐▌ ▐▌▐▄▄▟▘
+    ▝▘ ▝▘  ▀▀   ▀   ▀▀▀  ▝▀▘ ▝▘ ▀▘     ▝▘ ▝▘▝▘ ▝▘▝▘ ▀▘▝▀▀  ▝▀▀▀▘▝▀▀▀▘▝▘ ▝▀ ▀▀▘
 
     */
 
@@ -313,7 +439,7 @@ impl WindowManager {
     }
 
     fn change_workspace(&mut self, new_workspace: usize) {
-        if self.workspace == new_workspace  || new_workspace >= NUM_WORKSPACES{
+        if self.workspace == new_workspace || new_workspace >= NUM_WORKSPACES {
             return;
         }
         let old_wspace_cookies: Vec<_> = self
@@ -341,14 +467,19 @@ impl WindowManager {
         new_wspace_cookies.into_iter().for_each(|cookie| {
             let _ = self.conn.check_request(cookie);
         });
+
+        self.update_current_workspace();
     }
 
     /*
-      _______     _______ _   _ _____   _   _    _    _   _ ____  _     _____ ____  ____
-    | ____\ \   / / ____| \ | |_   _| | | | |  / \  | \ | |  _ \| |   | ____|  _ \/ ___|
-    |  _|  \ \ / /|  _| |  \| | | |   | |_| | / _ \ |  \| | | | | |   |  _| | |_) \___ \
-    | |___  \ V / | |___| |\  | | |   |  _  |/ ___ \| |\  | |_| | |___| |___|  _ < ___) |
-    |_____|  \_/  |_____|_| \_| |_|   |_| |_/_/   \_\_| \_|____/|_____|_____|_| \_\____/
+
+    ▗▄▄▄▖▗▖ ▗▖▗▄▄▄▖▗▄ ▗▖▗▄▄▄▖     ▗▖ ▗▖  ▄  ▗▄ ▗▖▗▄▄  ▗▖   ▗▄▄▄▖▗▄▄▖  ▗▄▖
+    ▐▛▀▀▘▝█ █▘▐▛▀▀▘▐█ ▐▌▝▀█▀▘     ▐▌ ▐▌ ▐█▌ ▐█ ▐▌▐▛▀█ ▐▌   ▐▛▀▀▘▐▛▀▜▌▗▛▀▜
+    ▐▌    █ █ ▐▌   ▐▛▌▐▌  █       ▐▌ ▐▌ ▐█▌ ▐▛▌▐▌▐▌ ▐▌▐▌   ▐▌   ▐▌ ▐▌▐▙
+    ▐███  █ █ ▐███ ▐▌█▐▌  █       ▐███▌ █ █ ▐▌█▐▌▐▌ ▐▌▐▌   ▐███ ▐███  ▜█▙
+    ▐▌    ▐█▌ ▐▌   ▐▌▐▟▌  █       ▐▌ ▐▌ ███ ▐▌▐▟▌▐▌ ▐▌▐▌   ▐▌   ▐▌▝█▖   ▜▌
+    ▐▙▄▄▖ ▐█▌ ▐▙▄▄▖▐▌ █▌  █       ▐▌ ▐▌▗█ █▖▐▌ █▌▐▙▄█ ▐▙▄▄▖▐▙▄▄▖▐▌ ▐▌▐▄▄▟▘
+    ▝▀▀▀▘ ▝▀▘ ▝▀▀▀▘▝▘ ▀▘  ▀       ▝▘ ▝▘▝▘ ▝▘▝▘ ▀▘▝▀▀  ▝▀▀▀▘▝▀▀▀▘▝▘ ▝▀ ▀▀▘
 
     */
 
@@ -363,9 +494,6 @@ impl WindowManager {
                 ActionEvent::FocusNext => self.shift_focus(1),
                 ActionEvent::FocusPrev => self.shift_focus(-1),
                 ActionEvent::Workspace(workspace) => self.change_workspace(*workspace),
-                _ => {
-                    println!("Action {:?} not implemented yet", action);
-                }
             }
         } else {
             println!(
@@ -408,11 +536,14 @@ impl WindowManager {
     }
 
     /*
-     __  __    _    ___ _   _   _     ___   ___  ____
-    |  \/  |  / \  |_ _| \ | | | |   / _ \ / _ \|  _ \
-    | |\/| | / _ \  | ||  \| | | |  | | | | | | | |_) |
-    | |  | |/ ___ \ | || |\  | | |__| |_| | |_| |  __/
-    |_|  |_/_/   \_\___|_| \_| |_____\___/ \___/|_|
+
+    ▗▄ ▄▖  ▄   ▄▄▄ ▗▄ ▗▖     ▗▖    ▗▄▖  ▗▄▖ ▗▄▄▖
+    ▐█ █▌ ▐█▌  ▀█▀ ▐█ ▐▌     ▐▌    █▀█  █▀█ ▐▛▀▜▖
+    ▐███▌ ▐█▌   █  ▐▛▌▐▌     ▐▌   ▐▌ ▐▌▐▌ ▐▌▐▌ ▐▌
+    ▐▌█▐▌ █ █   █  ▐▌█▐▌     ▐▌   ▐▌ ▐▌▐▌ ▐▌▐██▛
+    ▐▌▀▐▌ ███   █  ▐▌▐▟▌     ▐▌   ▐▌ ▐▌▐▌ ▐▌▐▌
+    ▐▌ ▐▌▗█ █▖ ▄█▄ ▐▌ █▌     ▐▙▄▄▖ █▄█  █▄█ ▐▌
+    ▝▘ ▝▘▝▘ ▝▘ ▀▀▀ ▝▘ ▀▘     ▝▀▀▀▘ ▝▀▘  ▝▀▘ ▝▘
 
     */
 
