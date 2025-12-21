@@ -2,13 +2,13 @@
 
 rdwm is a small, minimalist dynamic window manager written in Rust using XCB.
 
-Features
+## Features
 - Minimal dynamic tiling layout (even horizontal tiling across visible windows)
 - Multiple workspaces (configurable via `NUM_WORKSPACES`)
 - Keyboard-driven actions: spawn apps, kill focused client, change focus, switch workspaces
 - Lightweight: few dependencies (xcb, xkbcommon)
 
-Building
+## Building
 1. Install Rust toolchain (stable) and necessary X development libraries for `xcb` and `xkbcommon`.
 2. Build in debug mode:
 
@@ -50,8 +50,3 @@ Notes
 - [ ] Additional layouts (stacking, master-stack, dynamic layouts) and configurable gaps
 - [ ] Improved multi-monitor support and per-monitor workspaces
 - [ ] More robust error handling and configuration parsing
-
-Contributing
-
-- Feel free to open issues or PRs for features above. Small, focused patches are easiest to review.
-
