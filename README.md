@@ -34,6 +34,3 @@ Notes
 - Configure key bindings and behavior in `src/config.rs` and `src/key_mapping.rs`.
 - Logging uses the `log` and `env_logger` crates; run with `RUST_LOG=debug` to see debug output.
 - This project is experimental — use in a nested session (Xephyr) for testing before using as your main window manager.
-
-License
-- (Add your license here)
