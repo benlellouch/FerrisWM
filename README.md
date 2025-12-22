@@ -42,10 +42,10 @@ Notes
 - [x] Keyboard-driven controls: spawn apps, kill focused client, focus next/previous, switch workspaces
 - [x] Lightweight, minimal dependencies (`xcb`, `xkbcommon`) and simple configuration in `src/config.rs`
 - [x] Basic logging via `log` + `env_logger`
-- [ ] Move windows around within a workspace 
+- [x] Move windows around within a workspace 
 - [ ] Resize windows interactively
-- [ ] Move windows between workspaces
-- [ ] Add EWMH (NETWM) / ICCCM hints for better compatibility with external panels/status bars and desktop tools
+- [x] Move windows between workspaces
+- [x] Add EWMH (NETWM) / ICCCM hints for better compatibility with external panels/status bars and desktop tools
 - [ ] Create a custom status bar (or integration points) so you can build your own bar displaying workspaces, layout, and window titles
 - [ ] Additional layouts (stacking, master-stack, dynamic layouts) and configurable gaps
 - [ ] Improved multi-monitor support and per-monitor workspaces
