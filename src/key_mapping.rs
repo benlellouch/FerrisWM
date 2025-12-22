@@ -9,8 +9,11 @@ pub struct ActionMapping {
 #[derive(Debug, Copy, Clone)]
 pub enum ActionEvent {
     Spawn(&'static str),
-    KillClient,
-    FocusNext,
-    FocusPrev,
-    Workspace(usize),
+    Kill,
+    NextWindow,
+    PrevWindow,
+    SwapLeft,
+    SwapRight,
+    GoToWorkspace(usize),
+    SendToWorkspace(usize),
 }

@@ -24,66 +24,126 @@ pub static ACTION_MAPPINGS: &[ActionMapping] = &[
     ActionMapping {
         key: xkb::Keysym::q,
         modifiers: &[ModMask::N1],
-        action: ActionEvent::KillClient,
+        action: ActionEvent::Kill,
     },
     ActionMapping {
         key: xkb::Keysym::j,
         modifiers: &[ModMask::N1],
-        action: ActionEvent::FocusPrev,
+        action: ActionEvent::PrevWindow,
     },
     ActionMapping {
         key: xkb::Keysym::k,
         modifiers: &[ModMask::N1],
-        action: ActionEvent::FocusNext,
+        action: ActionEvent::NextWindow,
+    },
+    ActionMapping {
+        key: xkb::Keysym::j,
+        modifiers: &[ModMask::N1, ModMask::SHIFT],
+        action: ActionEvent::SwapLeft,
+    },
+    ActionMapping {
+        key: xkb::Keysym::k,
+        modifiers: &[ModMask::N1, ModMask::SHIFT],
+        action: ActionEvent::SwapRight,
     },
     ActionMapping {
         key: xkb::Keysym::_1,
         modifiers: &[ModMask::N1],
-        action: ActionEvent::Workspace(0),
+        action: ActionEvent::GoToWorkspace(0),
     },
     ActionMapping {
         key: xkb::Keysym::_2,
         modifiers: &[ModMask::N1],
-        action: ActionEvent::Workspace(1),
+        action: ActionEvent::GoToWorkspace(1),
     },
-        ActionMapping {
+    ActionMapping {
         key: xkb::Keysym::_3,
         modifiers: &[ModMask::N1],
-        action: ActionEvent::Workspace(2),
+        action: ActionEvent::GoToWorkspace(2),
     },
     ActionMapping {
         key: xkb::Keysym::_4,
         modifiers: &[ModMask::N1],
-        action: ActionEvent::Workspace(3),
+        action: ActionEvent::GoToWorkspace(3),
     },
     ActionMapping {
         key: xkb::Keysym::_5,
         modifiers: &[ModMask::N1],
-        action: ActionEvent::Workspace(4),
+        action: ActionEvent::GoToWorkspace(4),
     },
     ActionMapping {
         key: xkb::Keysym::_6,
         modifiers: &[ModMask::N1],
-        action: ActionEvent::Workspace(5),
+        action: ActionEvent::GoToWorkspace(5),
     },
     ActionMapping {
         key: xkb::Keysym::_7,
         modifiers: &[ModMask::N1],
-        action: ActionEvent::Workspace(6),
+        action: ActionEvent::GoToWorkspace(6),
     },
     ActionMapping {
         key: xkb::Keysym::_8,
         modifiers: &[ModMask::N1],
-        action: ActionEvent::Workspace(7),
+        action: ActionEvent::GoToWorkspace(7),
     },
     ActionMapping {
         key: xkb::Keysym::_9,
         modifiers: &[ModMask::N1],
-        action: ActionEvent::Workspace(8),
+        action: ActionEvent::GoToWorkspace(8),
     },
-        ActionMapping {
+    ActionMapping {
         key: xkb::Keysym::_0,
         modifiers: &[ModMask::N1],
-        action: ActionEvent::Workspace(9),
+        action: ActionEvent::GoToWorkspace(9),
+    },
+    ActionMapping {
+        key: xkb::Keysym::_1,
+        modifiers: &[ModMask::N1, ModMask::SHIFT],
+        action: ActionEvent::SendToWorkspace(0),
+    },
+    ActionMapping {
+        key: xkb::Keysym::_2,
+        modifiers: &[ModMask::N1, ModMask::SHIFT],
+        action: ActionEvent::SendToWorkspace(1),
+    },
+    ActionMapping {
+        key: xkb::Keysym::_3,
+        modifiers: &[ModMask::N1, ModMask::SHIFT],
+        action: ActionEvent::SendToWorkspace(2),
+    },
+    ActionMapping {
+        key: xkb::Keysym::_4,
+        modifiers: &[ModMask::N1, ModMask::SHIFT],
+        action: ActionEvent::SendToWorkspace(3),
+    },
+    ActionMapping {
+        key: xkb::Keysym::_5,
+        modifiers: &[ModMask::N1, ModMask::SHIFT],
+        action: ActionEvent::SendToWorkspace(4),
+    },
+    ActionMapping {
+        key: xkb::Keysym::_6,
+        modifiers: &[ModMask::N1, ModMask::SHIFT],
+        action: ActionEvent::SendToWorkspace(5),
+    },
+    ActionMapping {
+        key: xkb::Keysym::_7,
+        modifiers: &[ModMask::N1, ModMask::SHIFT],
+        action: ActionEvent::SendToWorkspace(6),
+    },
+    ActionMapping {
+        key: xkb::Keysym::_8,
+        modifiers: &[ModMask::N1, ModMask::SHIFT],
+        action: ActionEvent::SendToWorkspace(7),
+    },
+    ActionMapping {
+        key: xkb::Keysym::_9,
+        modifiers: &[ModMask::N1, ModMask::SHIFT],
+        action: ActionEvent::SendToWorkspace(8),
+    },
+    ActionMapping {
+        key: xkb::Keysym::_0,
+        modifiers: &[ModMask::N1, ModMask::SHIFT],
+        action: ActionEvent::SendToWorkspace(9),
     },
 ];

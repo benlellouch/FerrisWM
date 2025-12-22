@@ -6,9 +6,9 @@ use xcb::{
     Connection, ProtocolError, VoidCookieChecked, Xid,
 };
 
+use crate::atoms::Atoms;
 use crate::config::{DEFAULT_BORDER_WIDTH, NUM_WORKSPACES};
 use crate::key_mapping::ActionEvent;
-use crate::atoms::Atoms;
 use crate::keyboard::{fetch_keyboard_mapping, populate_key_bindings, set_keygrabs};
 use crate::workspace::Workspace;
 
@@ -18,8 +18,6 @@ pub struct ScreenConfig {
     pub focused_border_pixel: u32,
     pub normal_border_pixel: u32,
 }
-
-
 
 pub struct WindowManagerConfig {
     pub key_bindings: HashMap<(u8, ModMask), ActionEvent>,
@@ -120,8 +118,6 @@ impl WindowManager {
         })
     }
 
-    
-
     fn setup_screen(conn: &Connection) -> ScreenConfig {
         let root = conn.get_setup().roots().next().expect("Cannot find root");
         ScreenConfig {
@@ -144,9 +140,7 @@ impl WindowManager {
         // Create a check window for _NET_SUPPORTING_WM_CHECK
         // This window is used by clients to verify the WM is EWMH compliant
         let win = conn.generate_id();
-        let values = [
-            x::Cw::OverrideRedirect(true),
-        ];
+        let values = [x::Cw::OverrideRedirect(true)];
         conn.send_request(&x::CreateWindow {
             depth: 0,
             wid: win,
@@ -200,10 +194,6 @@ impl WindowManager {
         false
     }
 
-    
-
-
-
     /*
 
     ▗▄▄▄▖▄   ▄▗▄ ▄▖▗▖ ▗▖
@@ -215,8 +205,6 @@ impl WindowManager {
     ▝▀▀▀▘▝▀ ▀▘▝▘ ▝▘▝▘ ▝▘
 
     */
-
-    
 
     fn publish_ewmh_hints(&self) {
         // Publish _NET_SUPPORTING_WM_CHECK on both root and check window
@@ -250,22 +238,38 @@ impl WindowManager {
             &self.conn,
             self.root_window(),
             self.atoms.net_supported,
-            &supported_atoms.iter().map(|a| a.resource_id()).collect::<Vec<_>>(),
+            &supported_atoms
+                .iter()
+                .map(|a| a.resource_id())
+                .collect::<Vec<_>>(),
         );
 
         // Publish desktop information
-        Atoms::set_cardinal32(&self.conn, self.root_window(), self.atoms.net_number_of_desktops, &[NUM_WORKSPACES as u32]);
-        Atoms::set_cardinal32(&self.conn, self.root_window(), self.atoms.net_current_desktop, &[0 as u32]);
+        Atoms::set_cardinal32(
+            &self.conn,
+            self.root_window(),
+            self.atoms.net_number_of_desktops,
+            &[NUM_WORKSPACES as u32],
+        );
+        Atoms::set_cardinal32(
+            &self.conn,
+            self.root_window(),
+            self.atoms.net_current_desktop,
+            &[0 as u32],
+        );
 
         info!("Published EWMH hints successfully");
     }
 
     fn update_current_workspace(&self) {
-        let cookie = Atoms::set_cardinal32(&self.conn, self.root_window(), self.atoms.net_current_desktop, &[self.workspace as u32]);
+        let cookie = Atoms::set_cardinal32(
+            &self.conn,
+            self.root_window(),
+            self.atoms.net_current_desktop,
+            &[self.workspace as u32],
+        );
         let _ = self.conn.check_request(cookie);
     }
-
-    
 
     /*
 
@@ -294,6 +298,10 @@ impl WindowManager {
         self.workspaces
             .get(self.workspace)
             .expect("Workspace should never be out of bounds")
+    }
+
+    fn get_workspace(&self, workspace_id: usize) -> Option<&Workspace> {
+        self.workspaces.get(workspace_id)
     }
 
     /*
@@ -330,38 +338,38 @@ impl WindowManager {
         })
     }
 
-    fn configure_windows(&self) {
-        let window_count = self.current_workspace().num_of_windows() as u32;
-        if window_count == 0 {
-            debug!("No windows to configure");
-            return;
+    fn configure_windows(&self, workspace_id: usize) {
+        if let Some(workspace) = self.get_workspace(workspace_id) {
+            let window_count = workspace.num_of_windows() as u32;
+            if window_count == 0 {
+                debug!("No windows to configure");
+                return;
+            }
+
+            let border_width = self.border_width as i32;
+            let cell = (self.screen_width as i32) / (window_count as i32);
+            let inner_w = (cell - 2 * border_width).max(1);
+            let inner_h = ((self.screen_height_usable as i32) - 2 * border_width).max(1);
+
+            let config_cookies: Vec<_> = workspace
+                .iter_windows()
+                .enumerate()
+                .map(|(i, win)| {
+                    let x = i as i32 * cell;
+                    let y = 0;
+                    self.configure_window(*win, x, y, inner_w as u32, inner_h as u32)
+                })
+                .collect();
+
+            config_cookies.into_iter().for_each(|cookie| {
+                let _ = self.conn.check_request(cookie);
+            });
         }
-
-        let border_width = self.border_width as i32;
-        let cell = (self.screen_width as i32) / (window_count as i32);
-        let inner_w = (cell - 2 * border_width).max(1);
-        let inner_h = ((self.screen_height_usable as i32) - 2 * border_width).max(1);
-
-        let config_cookies: Vec<_> = self
-            .current_workspace()
-            .iter_windows()
-            .enumerate()
-            .map(|(i, win)| {
-                let x = i as i32 * cell;
-                let y = 0;
-                self.configure_window(*win, x, y, inner_w as u32, inner_h as u32)
-            })
-            .collect();
-
-        config_cookies.into_iter().for_each(|cookie| {
-            let _ = self.conn.check_request(cookie);
-        });
-
     }
 
     fn configure_dock_windows(&self) {
         let dock_y = (self.screen_height as i32) - (self.dock_height as i32);
-        
+
         for window in &self.dock_windows {
             let config_values = [
                 x::ConfigWindow::X(0),
@@ -379,8 +387,8 @@ impl WindowManager {
 
     fn set_focus(&mut self, idx: usize) {
         // Reset border on old focused window (if any)
-        if let Some(old) = self.current_workspace().get_focused_window().copied() {
-            self.set_window_border(old, self.normal_border_pixel, self.border_width);
+        if let Some(old_window) = self.current_workspace().get_focused_window().copied() {
+            self.unfocus_window(old_window);
             debug!("Reset border on old focused window");
         }
 
@@ -388,10 +396,8 @@ impl WindowManager {
 
         // Set border on window to be focused (if present)
         if let Some(new_focus_window) = self.current_workspace().get_focused_window().copied() {
-            self.set_window_border(
+            self.focus_window(
                 new_focus_window,
-                self.focused_border_pixel,
-                self.border_width,
             );
             let _ = self.conn.send_and_check_request(&x::SetInputFocus {
                 revert_to: x::InputFocus::PointerRoot,
@@ -399,6 +405,14 @@ impl WindowManager {
                 time: 0,
             });
         }
+    }
+
+    fn focus_window(&self, window: Window) {
+        self.set_window_border(window, self.focused_border_pixel, self.border_width);
+    }
+
+    fn unfocus_window(&self, window: Window) {
+        self.set_window_border(window, self.normal_border_pixel, self.border_width);
     }
 
     fn set_window_border(&self, window: Window, pixel: u32, width: u32) {
@@ -449,28 +463,49 @@ impl WindowManager {
 
             // Reconfigure remaining workspaces
             self.shift_focus(0);
-            self.configure_windows();
+            self.configure_windows(self.workspace);
         }
     }
 
-    fn shift_focus(&mut self, direction: isize) {
+    fn next_window_index(&mut self, direction: isize) -> Option<usize> {
         let curr_workspace = self.current_workspace_mut();
-        let window_count = curr_workspace.num_of_windows() as isize;
+        let window_count: isize = curr_workspace.num_of_windows() as isize;
 
         if window_count == 0 {
             debug!("No windows to focus");
-            return;
+            return None;
         }
 
         let curr = curr_workspace.get_focus().unwrap_or(0) as isize;
-        let next_focus: usize = ((curr + direction).rem_euclid(window_count)) as usize;
-
-        debug!("Focus shifted to window index: {}", next_focus);
-        self.set_focus(next_focus);
+        Some(((curr + direction).rem_euclid(window_count)) as usize)
     }
 
-    fn change_workspace(&mut self, new_workspace: usize) {
-        if self.workspace == new_workspace || new_workspace >= NUM_WORKSPACES {
+    fn shift_focus(&mut self, direction: isize) {
+        if let Some(next_focus) = self.next_window_index(direction) {
+            debug!("Focus shifted to window index: {}", next_focus);
+            self.set_focus(next_focus);
+        }
+    }
+
+    fn swap_window(&mut self, direction: isize) {
+        if let Some(next_window) = self.next_window_index(direction) {
+            let curr_workspace = self.current_workspace_mut();
+            match curr_workspace.get_focus() {
+                Some(focus) => {
+                    curr_workspace.swap_windows(focus, next_window);
+                    self.set_focus(next_window);
+                    self.configure_windows(self.workspace);
+                }
+                None => error!(
+                    "Failed to get focus for current workspace {}",
+                    self.workspace
+                ),
+            }
+        }
+    }
+
+    fn go_to_workspace(&mut self, new_workspace_id: usize) {
+        if self.workspace == new_workspace_id || new_workspace_id >= NUM_WORKSPACES {
             return;
         }
         let old_wspace_cookies: Vec<_> = self
@@ -482,7 +517,7 @@ impl WindowManager {
             })
             .collect();
 
-        self.workspace = new_workspace;
+        self.workspace = new_workspace_id;
         let new_wspace_cookies: Vec<_> = self
             .current_workspace()
             .iter_windows()
@@ -500,8 +535,27 @@ impl WindowManager {
         });
 
         self.update_current_workspace();
+    }
 
-
+    fn send_to_workspace(&mut self, workspace_id: usize) {
+        match self.current_workspace_mut().removed_focused_window() {
+            Some(window_to_send) => {
+                if let Some(new_workspace) = self.workspaces.get_mut(workspace_id) {
+                    new_workspace.push_window(window_to_send);
+                    let _ = self.conn.send_and_check_request(&x::UnmapWindow {
+                        window: window_to_send,
+                    });
+                    self.unfocus_window(window_to_send);
+                    self.configure_windows(self.workspace);
+                    self.configure_windows(workspace_id);
+                    self.shift_focus(0);
+                }
+            }
+            None => error!(
+                "Failed to remove focused window from workspace {}",
+                self.workspace
+            ),
+        }
     }
 
     /*
@@ -523,13 +577,16 @@ impl WindowManager {
         if let Some(action) = self.key_bindings.get(&(keycode, modifiers)) {
             match action {
                 ActionEvent::Spawn(cmd) => self.spawn_client(cmd),
-                ActionEvent::KillClient => self.kill_client(),
-                ActionEvent::FocusNext => self.shift_focus(1),
-                ActionEvent::FocusPrev => self.shift_focus(-1),
-                ActionEvent::Workspace(workspace) => self.change_workspace(*workspace),
+                ActionEvent::Kill => self.kill_client(),
+                ActionEvent::NextWindow => self.shift_focus(1),
+                ActionEvent::PrevWindow => self.shift_focus(-1),
+                ActionEvent::GoToWorkspace(workspace_id) => self.go_to_workspace(*workspace_id),
+                ActionEvent::SendToWorkspace(workspace_id) => self.send_to_workspace(*workspace_id),
+                ActionEvent::SwapRight => self.swap_window(1),
+                ActionEvent::SwapLeft => self.swap_window(-1),
             }
         } else {
-            println!(
+            error!(
                 "No binding found for keycode: {} with modifiers: {:?}",
                 keycode, modifiers
             );
@@ -553,7 +610,7 @@ impl WindowManager {
         } else {
             // Regular window - add to current workspace
             self.current_workspace_mut().push_window(window);
-            self.configure_windows();
+            self.configure_windows(self.workspace);
             match self.conn.send_and_check_request(&x::MapWindow { window }) {
                 Ok(_) => (),
                 Err(e) => {
@@ -568,8 +625,11 @@ impl WindowManager {
     fn handle_destroy_event(&mut self, window: Window) {
         // Check if it's a dock window
         let window_id = window.resource_id();
-        let was_dock = self.dock_windows.iter().any(|w| w.resource_id() == window_id);
-        
+        let was_dock = self
+            .dock_windows
+            .iter()
+            .any(|w| w.resource_id() == window_id);
+
         if was_dock {
             debug!("Dock window destroyed: {:?}", window);
             self.dock_windows.retain(|w| w.resource_id() != window_id);
@@ -592,7 +652,7 @@ impl WindowManager {
             }
         }
 
-        self.configure_windows();
+        self.configure_windows(self.workspace);
     }
 
     /*

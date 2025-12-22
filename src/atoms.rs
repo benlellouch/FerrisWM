@@ -1,6 +1,6 @@
-use xcb::VoidCookieChecked;
 use xcb::x;
 use xcb::Connection;
+use xcb::VoidCookieChecked;
 
 use crate::ewmh::EwmhHint;
 
@@ -15,10 +15,12 @@ pub struct Atoms {
 
 impl Atoms {
     pub fn initialize(conn: &Connection) -> Atoms {
-        let net_number_of_desktops = Self::intern_atom(conn, EwmhHint::NetNumberOfDesktops.as_str());
+        let net_number_of_desktops =
+            Self::intern_atom(conn, EwmhHint::NetNumberOfDesktops.as_str());
         let net_current_desktop = Self::intern_atom(conn, EwmhHint::NetCurrentDesktop.as_str());
         let net_supported = Self::intern_atom(conn, EwmhHint::NetSupported.as_str());
-        let net_supporting_wm_check = Self::intern_atom(conn, EwmhHint::NetSupportingWmCheck.as_str());
+        let net_supporting_wm_check =
+            Self::intern_atom(conn, EwmhHint::NetSupportingWmCheck.as_str());
         let net_wm_window_type = Self::intern_atom(conn, "_NET_WM_WINDOW_TYPE");
         let net_wm_window_type_dock = Self::intern_atom(conn, "_NET_WM_WINDOW_TYPE_DOCK");
 
@@ -42,7 +44,12 @@ impl Atoms {
             .atom()
     }
 
-    pub fn set_window_property(conn: &Connection, window: x::Window, prop: x::Atom, values: &[u32]) {
+    pub fn set_window_property(
+        conn: &Connection,
+        window: x::Window,
+        prop: x::Atom,
+        values: &[u32],
+    ) {
         conn.send_request(&x::ChangeProperty {
             mode: x::PropMode::Replace,
             window,
@@ -52,7 +59,7 @@ impl Atoms {
         });
     }
 
-    pub fn set_atom(conn: &Connection, root: x::Window, prop: x::Atom, values: &[u32]){
+    pub fn set_atom(conn: &Connection, root: x::Window, prop: x::Atom, values: &[u32]) {
         conn.send_request(&x::ChangeProperty {
             mode: x::PropMode::Replace,
             window: root,
@@ -62,7 +69,12 @@ impl Atoms {
         });
     }
 
-    pub fn set_cardinal32(conn: &Connection, root: x::Window, prop: x::Atom, values: &[u32]) -> VoidCookieChecked {
+    pub fn set_cardinal32(
+        conn: &Connection,
+        root: x::Window,
+        prop: x::Atom,
+        values: &[u32],
+    ) -> VoidCookieChecked {
         conn.send_request_checked(&x::ChangeProperty {
             mode: x::PropMode::Replace,
             window: root,

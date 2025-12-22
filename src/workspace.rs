@@ -68,6 +68,12 @@ impl Workspace {
         self.windows.iter()
     }
 
+    pub fn swap_windows(&mut self, idx_a: usize, idx_b: usize) {
+        if idx_a < self.num_of_windows() && idx_b < self.num_of_windows() {
+            self.windows.swap(idx_a, idx_b);
+        }
+    }
+
     pub fn retain<F: FnMut(&Window) -> bool>(&mut self, f: F) {
         self.windows.retain(f)
     }

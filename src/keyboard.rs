@@ -51,7 +51,11 @@ pub fn populate_key_bindings(
     key_bindings
 }
 
-pub fn set_keygrabs(conn: &Connection, key_bindings: &HashMap<(u8, ModMask), ActionEvent>, root: x::Window) {
+pub fn set_keygrabs(
+    conn: &Connection,
+    key_bindings: &HashMap<(u8, ModMask), ActionEvent>,
+    root: x::Window,
+) {
     for &(keycode, modifiers) in key_bindings.keys() {
         match conn.send_and_check_request(&x::GrabKey {
             owner_events: false,
