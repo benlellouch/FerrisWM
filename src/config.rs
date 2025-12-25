@@ -47,6 +47,16 @@ pub static ACTION_MAPPINGS: &[ActionMapping] = &[
         action: ActionEvent::SwapRight,
     },
     ActionMapping {
+        key: xkb::Keysym::equal,
+        modifiers: &[ModMask::N1],
+        action: ActionEvent::IncreaseWindowWeight(1),
+    },
+    ActionMapping {
+        key: xkb::Keysym::minus,
+        modifiers: &[ModMask::N1],
+        action: ActionEvent::DecreaseWindowWeight(1),
+    },
+    ActionMapping {
         key: xkb::Keysym::_1,
         modifiers: &[ModMask::N1],
         action: ActionEvent::GoToWorkspace(0),

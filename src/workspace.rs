@@ -1,15 +1,47 @@
 use std::slice::Iter;
 use xcb::x::Window;
 
+#[derive(Debug)]
+pub struct TiledWindow {
+    window: Window,
+    size: u32,
+}
+
+impl TiledWindow {
+    pub fn window(&self) -> Window {
+        self.window
+    }
+
+    pub fn size(&self) -> u32 {
+        self.size
+    }
+
+    pub fn increase_window_size(&mut self, increment: u32) {
+        self.size += increment
+    }
+
+    pub fn decrease_window_size(&mut self, increment: u32) {
+        if self.size > 1 {
+            self.size -= increment
+        }
+    }
+}
+
 #[derive(Default, Debug)]
 pub struct Workspace {
-    windows: Vec<Window>,
+    windows: Vec<TiledWindow>,
     focus: Option<usize>,
 }
 
 impl Workspace {
     pub fn get_focused_window(&self) -> Option<&Window> {
-        self.focus.and_then(|i| self.windows.get(i))
+        self.focus
+            .and_then(|i| self.windows.get(i))
+            .map(|tw| &tw.window)
+    }
+
+    pub fn get_focused_window_tile_mut(&mut self) -> Option<&mut TiledWindow> {
+        self.focus.and_then(|i| self.windows.get_mut(i))
     }
 
     pub fn num_of_windows(&self) -> usize {
@@ -29,7 +61,8 @@ impl Workspace {
     }
 
     pub fn push_window(&mut self, window: Window) {
-        self.windows.push(window);
+        // new windows get a default size (weight) of 1
+        self.windows.push(TiledWindow { window, size: 1 });
         if self.focus.is_none() {
             self.focus = Some(self.windows.len().saturating_sub(1));
         }
@@ -37,7 +70,8 @@ impl Workspace {
 
     pub fn remove_window(&mut self, idx: usize) -> Option<Window> {
         if idx < self.num_of_windows() {
-            let window = self.windows.remove(idx);
+            let tw = self.windows.remove(idx);
+            let window = tw.window;
             self.update_focus();
             return Some(window);
         }
@@ -64,7 +98,11 @@ impl Workspace {
         }
     }
 
-    pub fn iter_windows(&self) -> Iter<'_, Window> {
+    pub fn iter_windows(&self) -> impl Iterator<Item = &Window> {
+        self.windows.iter().map(|tw| &tw.window)
+    }
+
+    pub fn iter_tiled_windows(&self) -> Iter<'_, TiledWindow> {
         self.windows.iter()
     }
 
@@ -75,6 +113,7 @@ impl Workspace {
     }
 
     pub fn retain<F: FnMut(&Window) -> bool>(&mut self, f: F) {
-        self.windows.retain(f)
+        let mut f = f;
+        self.windows.retain(|tw| f(&tw.window))
     }
 }

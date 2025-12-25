@@ -1,4 +1,4 @@
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use std::collections::HashMap;
 use std::process::Command;
 use xcb::{
@@ -340,29 +340,33 @@ impl WindowManager {
 
     fn configure_windows(&self, workspace_id: usize) {
         if let Some(workspace) = self.get_workspace(workspace_id) {
-            let window_count = workspace.num_of_windows() as u32;
-            if window_count == 0 {
+            let tiled_windows: Vec<_> = workspace.iter_tiled_windows().collect();
+            if tiled_windows.is_empty() {
                 debug!("No windows to configure");
                 return;
             }
 
-            let border_width = self.border_width as i32;
-            let cell = (self.screen_width as i32) / (window_count as i32);
-            let inner_w = (cell - 2 * border_width).max(1);
-            let inner_h = ((self.screen_height_usable as i32) - 2 * border_width).max(1);
+            let total_size: u32 = tiled_windows.iter().map(|tw| tw.size()).sum();
+            let border_width = self.border_width;
+            let inner_h = (self.screen_height_usable - 2 * border_width).max(1);
+            let screen_partitions = self.screen_width / total_size;
 
-            let config_cookies: Vec<_> = workspace
-                .iter_windows()
-                .enumerate()
-                .map(|(i, win)| {
-                    let x = i as i32 * cell;
-                    let y = 0;
-                    self.configure_window(*win, x, y, inner_w as u32, inner_h as u32)
+            let mut cumulative = 0u32;
+            let config_cookies: Vec<_> = tiled_windows
+                .iter()
+                .map(|twin| {
+                    let cell = (self.screen_width * twin.size()) / total_size;
+                    let inner_w = (cell - 2 * border_width).max(1);
+                    let x = (cumulative * screen_partitions) as i32;
+                    cumulative += twin.size();
+                    self.configure_window(twin.window(), x, 0, inner_w, inner_h)
                 })
                 .collect();
 
             config_cookies.into_iter().for_each(|cookie| {
-                let _ = self.conn.check_request(cookie);
+                if let Err(e) = self.conn.check_request(cookie) {
+                    warn!("Failed to configure window: {:?}", e);
+                }
             });
         }
     }
@@ -396,9 +400,7 @@ impl WindowManager {
 
         // Set border on window to be focused (if present)
         if let Some(new_focus_window) = self.current_workspace().get_focused_window().copied() {
-            self.focus_window(
-                new_focus_window,
-            );
+            self.focus_window(new_focus_window);
             let _ = self.conn.send_and_check_request(&x::SetInputFocus {
                 revert_to: x::InputFocus::PointerRoot,
                 focus: new_focus_window,
@@ -504,6 +506,20 @@ impl WindowManager {
         }
     }
 
+    fn increase_window_weight(&mut self, increment: u32) {
+        if let Some(focused_win) = self.current_workspace_mut().get_focused_window_tile_mut() {
+            focused_win.increase_window_size(increment);
+            self.configure_windows(self.workspace);
+        }
+    }
+
+    fn decrease_window_weight(&mut self, increment: u32) {
+        if let Some(focused_win) = self.current_workspace_mut().get_focused_window_tile_mut() {
+            focused_win.decrease_window_size(increment);
+            self.configure_windows(self.workspace);
+        }
+    }
+
     fn go_to_workspace(&mut self, new_workspace_id: usize) {
         if self.workspace == new_workspace_id || new_workspace_id >= NUM_WORKSPACES {
             return;
@@ -584,6 +600,12 @@ impl WindowManager {
                 ActionEvent::SendToWorkspace(workspace_id) => self.send_to_workspace(*workspace_id),
                 ActionEvent::SwapRight => self.swap_window(1),
                 ActionEvent::SwapLeft => self.swap_window(-1),
+                ActionEvent::IncreaseWindowWeight(increment) => {
+                    self.increase_window_weight(*increment)
+                }
+                ActionEvent::DecreaseWindowWeight(increment) => {
+                    self.decrease_window_weight(*increment)
+                }
             }
         } else {
             error!(

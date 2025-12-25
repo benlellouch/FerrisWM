@@ -12,6 +12,8 @@ pub enum ActionEvent {
     Kill,
     NextWindow,
     PrevWindow,
+    IncreaseWindowWeight(u32),
+    DecreaseWindowWeight(u32),
     SwapLeft,
     SwapRight,
     GoToWorkspace(usize),
