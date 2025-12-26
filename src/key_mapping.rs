@@ -18,4 +18,6 @@ pub enum ActionEvent {
     SwapRight,
     GoToWorkspace(usize),
     SendToWorkspace(usize),
+    IncreaseWindowGap(u32),
+    DecreaseWindowGap(u32),
 }

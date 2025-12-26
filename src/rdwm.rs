@@ -7,7 +7,7 @@ use xcb::{
 };
 
 use crate::atoms::Atoms;
-use crate::config::{DEFAULT_BORDER_WIDTH, NUM_WORKSPACES};
+use crate::config::{DEFAULT_BORDER_WIDTH, DEFAULT_WINDOW_GAP, NUM_WORKSPACES};
 use crate::key_mapping::ActionEvent;
 use crate::keyboard::{fetch_keyboard_mapping, populate_key_bindings, set_keygrabs};
 use crate::workspace::Workspace;
@@ -37,6 +37,7 @@ pub struct WindowManager {
     focused_border_pixel: u32,
     normal_border_pixel: u32,
     border_width: u32,
+    window_gap: u32,
     atoms: Atoms,
     root_window: Window,
     wm_check_window: Window,
@@ -69,6 +70,7 @@ impl WindowManager {
             focused_border_pixel: config.screen_config.focused_border_pixel,
             normal_border_pixel: config.screen_config.normal_border_pixel,
             border_width: DEFAULT_BORDER_WIDTH,
+            window_gap: DEFAULT_WINDOW_GAP,
             atoms: config.atoms,
             root_window: config.root_window,
             wm_check_window,
@@ -346,7 +348,7 @@ impl WindowManager {
             }
 
             let total_size: u32 = tiled_windows.iter().map(|tw| tw.size()).sum();
-            let border_width = self.border_width;
+            let border_width = self.border_width + self.window_gap;
             let inner_h = (self.screen_height_usable - 2 * border_width).max(1);
             let screen_partitions = self.screen_width / total_size;
 
@@ -356,9 +358,9 @@ impl WindowManager {
                 .map(|twin| {
                     let cell = (self.screen_width * twin.size()) / total_size;
                     let inner_w = (cell - 2 * border_width).max(1);
-                    let x = (cumulative * screen_partitions) as i32;
+                    let x = (cumulative * screen_partitions + self.window_gap) as i32;
                     cumulative += twin.size();
-                    self.configure_window(twin.window(), x, 0, inner_w, inner_h)
+                    self.configure_window(twin.window(), x, self.window_gap as i32, inner_w, inner_h)
                 })
                 .collect();
 
@@ -444,7 +446,18 @@ impl WindowManager {
 
     fn spawn_client(&self, cmd: &str) {
         info!("Spawning command: {}", cmd);
-        match Command::new(cmd).spawn() {
+        let parts: Vec<&str> = cmd.split_whitespace().collect();
+        if parts.is_empty() {
+            error!("Empty command provided");
+            return;
+        }
+
+        let mut command = Command::new(parts[0]);
+        for arg in &parts[1..] {
+            command.arg(arg);
+        }
+
+        match command.spawn() {
             Ok(_) => info!("Successfully spawned: {}", cmd),
             Err(e) => error!("Failed to spawn {}: {:?}", cmd, e),
         }
@@ -515,6 +528,18 @@ impl WindowManager {
     fn decrease_window_weight(&mut self, increment: u32) {
         if let Some(focused_win) = self.current_workspace_mut().get_focused_tiled_window_mut() {
             focused_win.decrease_window_size(increment);
+            self.configure_windows(self.workspace);
+        }
+    }
+
+    fn increase_window_gap(&mut self, increment: u32) {
+        self.window_gap += increment;
+        self.configure_windows(self.workspace);
+    }
+
+    fn decrease_window_gap(&mut self, increment: u32) {
+        if self.window_gap > 0 {
+            self.window_gap -= increment;
             self.configure_windows(self.workspace);
         }
     }
@@ -605,6 +630,8 @@ impl WindowManager {
                 ActionEvent::DecreaseWindowWeight(increment) => {
                     self.decrease_window_weight(*increment)
                 }
+                ActionEvent::IncreaseWindowGap(increment) => self.increase_window_gap(*increment),
+                ActionEvent::DecreaseWindowGap(increment) => self.decrease_window_gap(*increment),
             }
         } else {
             error!(

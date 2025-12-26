@@ -1,4 +1,4 @@
-use log::{error};
+use log::error;
 use xcb::x;
 use xcb::Connection;
 
