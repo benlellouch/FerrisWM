@@ -40,7 +40,7 @@ impl Workspace {
             .map(|tw| &tw.window)
     }
 
-    pub fn get_focused_window_tile_mut(&mut self) -> Option<&mut TiledWindow> {
+    pub fn get_focused_tiled_window_mut(&mut self) -> Option<&mut TiledWindow> {
         self.focus.and_then(|i| self.windows.get_mut(i))
     }
 

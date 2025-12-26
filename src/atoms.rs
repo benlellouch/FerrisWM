@@ -1,6 +1,6 @@
+use log::{error};
 use xcb::x;
 use xcb::Connection;
-use xcb::VoidCookieChecked;
 
 use crate::ewmh::EwmhHint;
 
@@ -60,27 +60,26 @@ impl Atoms {
     }
 
     pub fn set_atom(conn: &Connection, root: x::Window, prop: x::Atom, values: &[u32]) {
-        conn.send_request(&x::ChangeProperty {
+        if let Err(e) = conn.send_and_check_request(&x::ChangeProperty {
             mode: x::PropMode::Replace,
             window: root,
             property: prop,
             r#type: x::ATOM_ATOM,
             data: values,
-        });
+        }) {
+            error!("Failed to set Atom: {:?}", e)
+        }
     }
 
-    pub fn set_cardinal32(
-        conn: &Connection,
-        root: x::Window,
-        prop: x::Atom,
-        values: &[u32],
-    ) -> VoidCookieChecked {
-        conn.send_request_checked(&x::ChangeProperty {
+    pub fn set_cardinal32(conn: &Connection, root: x::Window, prop: x::Atom, values: &[u32]) {
+        if let Err(e) = conn.send_and_check_request(&x::ChangeProperty {
             mode: x::PropMode::Replace,
             window: root,
             property: prop,
             r#type: x::ATOM_CARDINAL,
             data: values,
-        })
+        }) {
+            error!("Failed to set Cardinal: {:?}", e)
+        }
     }
 }

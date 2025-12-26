@@ -1,3 +1,3 @@
 #!/bin/sh
 
-exec ./target/release/rdwm
+RUST_LOG=debug exec ./target/release/rdwm 

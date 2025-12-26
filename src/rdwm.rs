@@ -1,6 +1,6 @@
 use log::{debug, error, info, warn};
-use std::collections::HashMap;
 use std::process::Command;
+use std::{collections::HashMap, process::Stdio};
 use xcb::{
     x::{self, Cw, EventMask, ModMask, Window},
     Connection, ProtocolError, VoidCookieChecked, Xid,
@@ -262,13 +262,12 @@ impl WindowManager {
     }
 
     fn update_current_workspace(&self) {
-        let cookie = Atoms::set_cardinal32(
+        Atoms::set_cardinal32(
             &self.conn,
             self.root_window(),
             self.atoms.net_current_desktop,
             &[self.workspace as u32],
         );
-        let _ = self.conn.check_request(cookie);
     }
 
     /*
@@ -507,14 +506,14 @@ impl WindowManager {
     }
 
     fn increase_window_weight(&mut self, increment: u32) {
-        if let Some(focused_win) = self.current_workspace_mut().get_focused_window_tile_mut() {
+        if let Some(focused_win) = self.current_workspace_mut().get_focused_tiled_window_mut() {
             focused_win.increase_window_size(increment);
             self.configure_windows(self.workspace);
         }
     }
 
     fn decrease_window_weight(&mut self, increment: u32) {
-        if let Some(focused_win) = self.current_workspace_mut().get_focused_window_tile_mut() {
+        if let Some(focused_win) = self.current_workspace_mut().get_focused_tiled_window_mut() {
             focused_win.decrease_window_size(increment);
             self.configure_windows(self.workspace);
         }
@@ -689,7 +688,22 @@ impl WindowManager {
 
     */
 
+    fn spawn_autostart() {
+        match Command::new("sh")
+            .arg("-c")
+            .arg("exec ~/.config/rdwm/autostart.sh")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Ok(_) => debug!("Ran autostart succesfully!"),
+            Err(e) => debug!("Failed to run autostart: {:?}", e),
+        };
+    }
+
     pub fn run(&mut self) -> xcb::Result<()> {
+        Self::spawn_autostart();
         loop {
             match self.conn.wait_for_event()? {
                 xcb::Event::X(x::Event::KeyPress(ev)) => {
