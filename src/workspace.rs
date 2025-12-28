@@ -28,7 +28,7 @@ impl Client {
     }
 
     pub fn is_mapped(&self) -> bool {
-        return self.is_mapped;
+        self.is_mapped
     }
 
     pub fn set_mapped(&mut self, mapped: bool) {

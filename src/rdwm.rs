@@ -257,7 +257,7 @@ impl WindowManager {
             &self.conn,
             self.root_window(),
             self.atoms.net_current_desktop,
-            &[0 as u32],
+            &[0_u32],
         );
 
         info!("Published EWMH hints successfully");
@@ -703,7 +703,7 @@ impl WindowManager {
 
         for i in 0..10 {
             if let Some(workspace) = self.workspaces.get_mut(i) {
-                if let Some(_) = workspace.remove_client(&window_id) {
+                if workspace.remove_client(&window_id).is_some() {
                     break;
                 }
             }
