@@ -5,32 +5,38 @@ use xcb::Connection;
 use crate::ewmh::EwmhHint;
 
 pub struct Atoms {
-    pub net_number_of_desktops: x::Atom,
-    pub net_current_desktop: x::Atom,
-    pub net_supported: x::Atom,
-    pub net_supporting_wm_check: x::Atom,
-    pub net_wm_window_type: x::Atom,
-    pub net_wm_window_type_dock: x::Atom,
+    pub number_of_desktops: x::Atom,
+    pub current_desktop: x::Atom,
+    pub supported: x::Atom,
+    pub supporting_wm_check: x::Atom,
+    pub wm_window_type: x::Atom,
+    pub wm_window_type_dock: x::Atom,
+    pub wm_protocols: x::Atom,
+    pub wm_delete_window: x::Atom,
 }
 
 impl Atoms {
     pub fn initialize(conn: &Connection) -> Self {
-        let net_number_of_desktops =
+        let number_of_desktops =
             Self::intern_atom(conn, EwmhHint::NetNumberOfDesktops.as_str());
-        let net_current_desktop = Self::intern_atom(conn, EwmhHint::NetCurrentDesktop.as_str());
-        let net_supported = Self::intern_atom(conn, EwmhHint::NetSupported.as_str());
-        let net_supporting_wm_check =
+        let current_desktop = Self::intern_atom(conn, EwmhHint::NetCurrentDesktop.as_str());
+        let supported = Self::intern_atom(conn, EwmhHint::NetSupported.as_str());
+        let supporting_wm_check =
             Self::intern_atom(conn, EwmhHint::NetSupportingWmCheck.as_str());
-        let net_wm_window_type = Self::intern_atom(conn, "_NET_WM_WINDOW_TYPE");
-        let net_wm_window_type_dock = Self::intern_atom(conn, "_NET_WM_WINDOW_TYPE_DOCK");
+        let wm_window_type = Self::intern_atom(conn, "_NET_WM_WINDOW_TYPE");
+        let wm_window_type_dock = Self::intern_atom(conn, "_NET_WM_WINDOW_TYPE_DOCK");
+        let wm_protocols = Self::intern_atom(conn, "WM_PROTOCOLS");
+        let wm_delete_window = Self::intern_atom(conn, "WM_DELETE_WINDOW");
 
         Self {
-            net_number_of_desktops,
-            net_current_desktop,
-            net_supported,
-            net_supporting_wm_check,
-            net_wm_window_type,
-            net_wm_window_type_dock,
+            number_of_desktops,
+            current_desktop,
+            supported,
+            supporting_wm_check,
+            wm_window_type,
+            wm_window_type_dock,
+            wm_protocols,
+            wm_delete_window
         }
     }
 

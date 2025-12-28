@@ -177,7 +177,7 @@ impl WindowManager {
         let cookie = self.conn.send_request(&x::GetProperty {
             delete: false,
             window,
-            property: self.atoms.net_wm_window_type,
+            property: self.atoms.wm_window_type,
             r#type: x::ATOM_ATOM,
             long_offset: 0,
             long_length: 32,
@@ -187,7 +187,7 @@ impl WindowManager {
             let atoms_vec: &[x::Atom] = reply.value();
             // Check if the window type includes _NET_WM_WINDOW_TYPE_DOCK
             for atom in atoms_vec {
-                if atom.resource_id() == self.atoms.net_wm_window_type_dock.resource_id() {
+                if atom.resource_id() == self.atoms.wm_window_type_dock.resource_id() {
                     debug!("Window {window:?} identified as dock window");
                     return true;
                 }
@@ -214,7 +214,7 @@ impl WindowManager {
         Atoms::set_window_property(
             &self.conn,
             self.root_window(),
-            self.atoms.net_supporting_wm_check,
+            self.atoms.supporting_wm_check,
             &[self.wm_check_window.resource_id()],
         );
 
@@ -222,24 +222,24 @@ impl WindowManager {
         Atoms::set_window_property(
             &self.conn,
             self.wm_check_window,
-            self.atoms.net_supporting_wm_check,
+            self.atoms.supporting_wm_check,
             &[self.wm_check_window.resource_id()],
         );
 
         // Publish _NET_SUPPORTING - list of supported atoms
         let supported_atoms = [
-            self.atoms.net_supported,
-            self.atoms.net_supporting_wm_check,
-            self.atoms.net_number_of_desktops,
-            self.atoms.net_current_desktop,
-            self.atoms.net_wm_window_type,
-            self.atoms.net_wm_window_type_dock,
+            self.atoms.supported,
+            self.atoms.supporting_wm_check,
+            self.atoms.number_of_desktops,
+            self.atoms.current_desktop,
+            self.atoms.wm_window_type,
+            self.atoms.wm_window_type_dock,
         ];
 
         Atoms::set_atom(
             &self.conn,
             self.root_window(),
-            self.atoms.net_supported,
+            self.atoms.supported,
             &supported_atoms
                 .iter()
                 .map(xcb::Xid::resource_id)
@@ -250,13 +250,13 @@ impl WindowManager {
         Atoms::set_cardinal32(
             &self.conn,
             self.root_window(),
-            self.atoms.net_number_of_desktops,
+            self.atoms.number_of_desktops,
             &[NUM_WORKSPACES as u32],
         );
         Atoms::set_cardinal32(
             &self.conn,
             self.root_window(),
-            self.atoms.net_current_desktop,
+            self.atoms.current_desktop,
             &[0_u32],
         );
 
@@ -267,7 +267,7 @@ impl WindowManager {
         Atoms::set_cardinal32(
             &self.conn,
             self.root_window(),
-            self.atoms.net_current_desktop,
+            self.atoms.current_desktop,
             &[self.workspace as u32],
         );
     }
@@ -563,6 +563,7 @@ impl WindowManager {
             .collect();
 
         self.workspace = new_workspace_id;
+        self.configure_windows(self.workspace);
         let new_wspace_cookies: Vec<_> = self
             .current_workspace()
             .iter_windows()
@@ -572,13 +573,12 @@ impl WindowManager {
             })
             .collect();
 
+        for cookie in new_wspace_cookies { {
+            let _ = self.conn.check_request(cookie);
+        } }    
         for cookie in old_wspace_cookies { {
             let _ = self.conn.check_request(cookie);
         } }
-        for cookie in new_wspace_cookies { {
-            let _ = self.conn.check_request(cookie);
-        } }
-
         self.update_current_workspace();
         if let Some(focus) = self.current_workspace().get_focus() {
             self.set_focus(focus);
