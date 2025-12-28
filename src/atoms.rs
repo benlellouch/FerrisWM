@@ -67,7 +67,7 @@ impl Atoms {
             r#type: x::ATOM_ATOM,
             data: values,
         }) {
-            error!("Failed to set Atom: {:?}", e)
+            error!("Failed to set Atom: {e:?}");
         }
     }
 
@@ -79,7 +79,7 @@ impl Atoms {
             r#type: x::ATOM_CARDINAL,
             data: values,
         }) {
-            error!("Failed to set Cardinal: {:?}", e)
+            error!("Failed to set Cardinal: {e:?}");
         }
     }
 }

@@ -65,7 +65,7 @@ pub fn set_keygrabs(
             pointer_mode: x::GrabMode::Async,
             keyboard_mode: x::GrabMode::Async,
         }) {
-            Ok(_) => info!(
+            Ok(()) => info!(
                 "Successfully grabbed key: keycode {} with modifiers {:?}",
                 keycode, modifiers
             ),

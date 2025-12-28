@@ -23,7 +23,7 @@ impl Client {
 
     pub fn decrease_window_size(&mut self, increment: u32) {
         if self.size > 1 {
-            self.size -= increment
+            self.size -= increment;
         }
     }
 
@@ -96,7 +96,9 @@ impl Workspace {
     }
 
     pub fn remove_client(&mut self, win_resource_id: &u32) -> Option<Client> {
-        self.clients.shift_remove(win_resource_id)
+        let client = self.clients.shift_remove(win_resource_id);
+        self.update_focus();
+        client
     }
 
     fn update_focus(&mut self) {

@@ -468,7 +468,7 @@ impl WindowManager {
 
         match command.spawn() {
             Ok(_) => info!("Successfully spawned: {}", cmd),
-            Err(e) => error!("Failed to spawn {}: {:?}", cmd, e),
+            Err(e) => error!("Failed to spawn {cmd}: {e:?}"),
         }
     }
 
@@ -480,8 +480,8 @@ impl WindowManager {
             match self.conn.send_and_check_request(&x::KillClient {
                 resource: window_to_kill.resource_id(),
             }) {
-                Ok(_) => info!("Successfully killed window: {:?}", window_to_kill),
-                Err(e) => error!("Failed to kill window {:?}: {:?}", window_to_kill, e),
+                Ok(_) => info!("Successfully killed window: {window_to_kill:?}"),
+                Err(e) => error!("Failed to kill window {window_to_kill:?}: {e:?}"),
             }
         }
     }
@@ -643,8 +643,7 @@ impl WindowManager {
             }
         } else {
             error!(
-                "No binding found for keycode: {} with modifiers: {:?}",
-                keycode, modifiers
+                "No binding found for keycode: {keycode} with modifiers: {modifiers:?}",
             );
         }
     }
@@ -656,11 +655,11 @@ impl WindowManager {
             self.dock_windows.push(window);
             match self.conn.send_and_check_request(&x::MapWindow { window }) {
                 Ok(_) => {
-                    info!("Successfully mapped dock window: {:?}", window);
+                    info!("Successfully mapped dock window: {window:?}");
                     self.configure_dock_windows();
                 }
                 Err(e) => {
-                    error!("Failed to map dock window {:?}: {:?}", window, e);
+                    error!("Failed to map dock window {window:?}: {e:?}");
                 }
             }
         } else {
@@ -679,7 +678,7 @@ impl WindowManager {
             match self.conn.send_and_check_request(&x::MapWindow { window }) {
                 Ok(_) => (),
                 Err(e) => {
-                    error!("Failed to map window {:?}: {:?}", window, e);
+                    error!("Failed to map window {window:?}: {e:?}");
                 }
             }
             let idx = self.current_workspace().num_of_windows().saturating_sub(1);
@@ -702,14 +701,14 @@ impl WindowManager {
             return;
         }
 
-        // Handle regular window destruction
-        let curr_workspace = self.current_workspace_mut();
-
-        if curr_workspace.num_of_windows() == 0 {
-            debug!("No window to destroy");
-            return;
+        for i in 0..10 {
+            if let Some(workspace) = self.workspaces.get_mut(i) {
+                if let Some(_) = workspace.remove_client(&window_id) {
+                    break;
+                }
+            }
         }
-        curr_workspace.remove_client(&window_id);
+
         self.shift_focus(0);
         self.configure_windows(self.workspace);
     }
@@ -749,7 +748,7 @@ impl WindowManager {
             .spawn()
         {
             Ok(_) => debug!("Ran autostart succesfully!"),
-            Err(e) => debug!("Failed to run autostart: {:?}", e),
+            Err(e) => debug!("Failed to run autostart: {e:?}"),
         };
     }
 
@@ -758,7 +757,7 @@ impl WindowManager {
         loop {
             match self.conn.wait_for_event()? {
                 xcb::Event::X(x::Event::KeyPress(ev)) => {
-                    debug!("Received KeyPress event: {:?}", ev);
+                    debug!("Received KeyPress event: {ev:?}");
                     self.handle_key_press(&ev);
                 }
 

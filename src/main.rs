@@ -12,11 +12,11 @@ fn main() {
     match rdwm::WindowManager::new() {
         Ok(mut wm) => {
             if let Err(e) = wm.run() {
-                log::error!("Window manager runtime error: {:?}", e);
+                log::error!("Window manager runtime error: {e:?}");
             }
         }
         Err(e) => {
-            log::error!("Failed to initialize window manager: {:?}", e);
+            log::error!("Failed to initialize window manager: {e:?}");
         }
     }
 }
