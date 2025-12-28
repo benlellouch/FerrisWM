@@ -13,6 +13,7 @@ const MOD: ModMask = if TESTING.is_none() {
 } else {
     ModMask::N1
 };
+const SHIFT: ModMask = ModMask::SHIFT;
 
 /// Usage: binding!(key, [modifiers], action)
 macro_rules! binding {
@@ -29,27 +30,30 @@ macro_rules! binding {
 pub static ACTION_MAPPINGS: &[ActionMapping] = &[
     // ==================== SPAWN BINDINGS ====================
     binding!(xkb::Keysym::Return, [MOD], ActionEvent::Spawn("st")),
-    binding!(xkb::Keysym::Return, [MOD, ModMask::SHIFT], ActionEvent::Spawn("google-chrome-stable")),
+    binding!(xkb::Keysym::Return, [MOD, SHIFT], ActionEvent::Spawn("google-chrome-stable")),
     binding!(xkb::Keysym::space, [MOD], ActionEvent::Spawn("rofi -show drun")),
+    binding!(xkb::Keysym::r, [MOD,SHIFT], ActionEvent::Spawn("pkill -x rdwm")),
 
     // ==================== MULTIMEDIA BINDINGS ====================
     binding!(xkb::Keysym::XF86_ScrollUp, [], ActionEvent::Spawn("amixer set Master -q 5%+")),
     binding!(xkb::Keysym::XF86_ScrollDown, [], ActionEvent::Spawn("amixer set Master -q 5%-")),
+    binding!(xkb::Keysym::XF86_ScrollClick, [], ActionEvent::Spawn("amixer set Master toggle")),
     binding!(xkb::Keysym::XF86_AudioRaiseVolume, [], ActionEvent::Spawn("amixer set Master -q 5%+")),
     binding!(xkb::Keysym::XF86_AudioLowerVolume, [], ActionEvent::Spawn("amixer set Master -q 5%-")),
+    binding!(xkb::Keysym::XF86_AudioMute, [], ActionEvent::Spawn("amixer set Master toggle")),
 
     // ==================== WINDOW MANAGEMENT ====================
     binding!(xkb::Keysym::q, [MOD], ActionEvent::Kill),
     binding!(xkb::Keysym::Left, [MOD], ActionEvent::PrevWindow),
     binding!(xkb::Keysym::Right, [MOD], ActionEvent::NextWindow),
-    binding!(xkb::Keysym::Left, [MOD, ModMask::SHIFT], ActionEvent::SwapLeft),
-    binding!(xkb::Keysym::Right, [MOD, ModMask::SHIFT], ActionEvent::SwapRight),
+    binding!(xkb::Keysym::Left, [MOD, SHIFT], ActionEvent::SwapLeft),
+    binding!(xkb::Keysym::Right, [MOD, SHIFT], ActionEvent::SwapRight),
 
     // ==================== WINDOW SIZING ====================
     binding!(xkb::Keysym::equal, [MOD], ActionEvent::IncreaseWindowWeight(1)),
     binding!(xkb::Keysym::minus, [MOD], ActionEvent::DecreaseWindowWeight(1)),
-    binding!(xkb::Keysym::equal, [MOD, ModMask::SHIFT], ActionEvent::IncreaseWindowGap(1)),
-    binding!(xkb::Keysym::minus, [MOD, ModMask::SHIFT], ActionEvent::DecreaseWindowGap(1)),
+    binding!(xkb::Keysym::equal, [MOD, SHIFT], ActionEvent::IncreaseWindowGap(1)),
+    binding!(xkb::Keysym::minus, [MOD, SHIFT], ActionEvent::DecreaseWindowGap(1)),
 
     // ==================== WORKSPACE NAVIGATION (MOD + 1-9, 0) ====================
     binding!(xkb::Keysym::_1, [MOD], ActionEvent::GoToWorkspace(0)),
@@ -64,14 +68,14 @@ pub static ACTION_MAPPINGS: &[ActionMapping] = &[
     binding!(xkb::Keysym::_0, [MOD], ActionEvent::GoToWorkspace(9)),
 
     // ==================== WORKSPACE SEND (MOD + SHIFT + 1-9, 0) ====================
-    binding!(xkb::Keysym::_1, [MOD, ModMask::SHIFT], ActionEvent::SendToWorkspace(0)),
-    binding!(xkb::Keysym::_2, [MOD, ModMask::SHIFT], ActionEvent::SendToWorkspace(1)),
-    binding!(xkb::Keysym::_3, [MOD, ModMask::SHIFT], ActionEvent::SendToWorkspace(2)),
-    binding!(xkb::Keysym::_4, [MOD, ModMask::SHIFT], ActionEvent::SendToWorkspace(3)),
-    binding!(xkb::Keysym::_5, [MOD, ModMask::SHIFT], ActionEvent::SendToWorkspace(4)),
-    binding!(xkb::Keysym::_6, [MOD, ModMask::SHIFT], ActionEvent::SendToWorkspace(5)),
-    binding!(xkb::Keysym::_7, [MOD, ModMask::SHIFT], ActionEvent::SendToWorkspace(6)),
-    binding!(xkb::Keysym::_8, [MOD, ModMask::SHIFT], ActionEvent::SendToWorkspace(7)),
-    binding!(xkb::Keysym::_9, [MOD, ModMask::SHIFT], ActionEvent::SendToWorkspace(8)),
-    binding!(xkb::Keysym::_0, [MOD, ModMask::SHIFT], ActionEvent::SendToWorkspace(9)),
+    binding!(xkb::Keysym::_1, [MOD, SHIFT], ActionEvent::SendToWorkspace(0)),
+    binding!(xkb::Keysym::_2, [MOD, SHIFT], ActionEvent::SendToWorkspace(1)),
+    binding!(xkb::Keysym::_3, [MOD, SHIFT], ActionEvent::SendToWorkspace(2)),
+    binding!(xkb::Keysym::_4, [MOD, SHIFT], ActionEvent::SendToWorkspace(3)),
+    binding!(xkb::Keysym::_5, [MOD, SHIFT], ActionEvent::SendToWorkspace(4)),
+    binding!(xkb::Keysym::_6, [MOD, SHIFT], ActionEvent::SendToWorkspace(5)),
+    binding!(xkb::Keysym::_7, [MOD, SHIFT], ActionEvent::SendToWorkspace(6)),
+    binding!(xkb::Keysym::_8, [MOD, SHIFT], ActionEvent::SendToWorkspace(7)),
+    binding!(xkb::Keysym::_9, [MOD, SHIFT], ActionEvent::SendToWorkspace(8)),
+    binding!(xkb::Keysym::_0, [MOD, SHIFT], ActionEvent::SendToWorkspace(9)),
 ];

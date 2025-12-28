@@ -1,13 +1,14 @@
-use std::slice::Iter;
-use xcb::x::Window;
+use indexmap::IndexMap;
+use xcb::{x::Window, Xid};
 
 #[derive(Debug)]
-pub struct TiledWindow {
+pub struct Client {
     window: Window,
     size: u32,
+    is_mapped: bool,
 }
 
-impl TiledWindow {
+impl Client {
     pub fn window(&self) -> Window {
         self.window
     }
@@ -25,31 +26,45 @@ impl TiledWindow {
             self.size -= increment
         }
     }
+
+    pub fn is_mapped(&self) -> bool {
+        return self.is_mapped;
+    }
+
+    pub fn set_mapped(&mut self, mapped: bool) {
+        self.is_mapped = mapped
+    }
 }
 
 #[derive(Default, Debug)]
 pub struct Workspace {
-    windows: Vec<TiledWindow>,
+    clients: IndexMap<u32, Client>,
     focus: Option<usize>,
 }
 
 impl Workspace {
-    pub fn get_focused_window(&self) -> Option<&Window> {
+    pub fn get_focused_window(&self) -> Option<Window> {
         self.focus
-            .and_then(|i| self.windows.get(i))
-            .map(|tw| &tw.window)
+            .and_then(|i| self.clients.get_index(i))
+            .map(|(_key, client)| client.window())
     }
 
-    pub fn get_focused_tiled_window_mut(&mut self) -> Option<&mut TiledWindow> {
-        self.focus.and_then(|i| self.windows.get_mut(i))
+    pub fn get_focused_client_mut(&mut self) -> Option<&mut Client> {
+        self.focus
+            .and_then(|i| self.clients.get_index_mut(i))
+            .map(|(_key, client)| client)
+    }
+
+    pub fn get_client_mut(&mut self, win_resource_id: &u32) -> Option<&mut Client> {
+        self.clients.get_mut(win_resource_id)
     }
 
     pub fn num_of_windows(&self) -> usize {
-        self.windows.len()
+        self.clients.len()
     }
 
     pub fn set_focus(&mut self, idx: usize) -> bool {
-        if idx >= self.windows.len() {
+        if idx >= self.clients.len() {
             return false;
         }
         self.focus = Some(idx);
@@ -61,60 +76,60 @@ impl Workspace {
     }
 
     pub fn push_window(&mut self, window: Window) {
-        // new windows get a default size (weight) of 1
-        self.windows.push(TiledWindow { window, size: 1 });
+        self.clients.insert(
+            window.resource_id(),
+            Client {
+                window,
+                size: 1,
+                is_mapped: true,
+            },
+        );
         if self.focus.is_none() {
-            self.focus = Some(self.windows.len().saturating_sub(1));
+            self.focus = Some(self.clients.len().saturating_sub(1));
         }
     }
 
-    pub fn remove_window(&mut self, idx: usize) -> Option<Window> {
-        if idx < self.num_of_windows() {
-            let tw = self.windows.remove(idx);
-            let window = tw.window;
-            self.update_focus();
-            return Some(window);
-        }
-        None
+    pub fn remove_window_index(&mut self, idx: usize) -> Option<Window> {
+        let entry = self.clients.shift_remove_index(idx);
+        self.update_focus();
+        entry.map(|(_key, client)| client.window)
+    }
+
+    pub fn remove_client(&mut self, win_resource_id: &u32) -> Option<Client> {
+        self.clients.shift_remove(win_resource_id)
     }
 
     fn update_focus(&mut self) {
-        if self.windows.is_empty() {
+        if self.clients.is_empty() {
             self.focus = None;
             return;
         }
 
         match self.focus {
-            Some(f) if f < self.windows.len() => {}
-            _ => self.focus = Some(self.windows.len().saturating_sub(1)),
+            Some(f) if f < self.clients.len() => {}
+            _ => self.focus = Some(self.clients.len().saturating_sub(1)),
         }
     }
 
     pub fn removed_focused_window(&mut self) -> Option<Window> {
         if let Some(idx) = self.focus {
-            self.remove_window(idx)
+            self.remove_window_index(idx)
         } else {
             None
         }
     }
 
     pub fn iter_windows(&self) -> impl Iterator<Item = &Window> {
-        self.windows.iter().map(|tw| &tw.window)
+        self.clients.iter().map(|(_key, client)| &client.window)
     }
 
-    pub fn iter_tiled_windows(&self) -> Iter<'_, TiledWindow> {
-        self.windows.iter()
+    pub fn iter_clients(&self) -> impl Iterator<Item = &Client> {
+        self.clients.iter().map(|(_key, client)| client)
     }
 
     pub fn swap_windows(&mut self, idx_a: usize, idx_b: usize) {
         if idx_a < self.num_of_windows() && idx_b < self.num_of_windows() {
-            self.windows.swap(idx_a, idx_b);
+            self.clients.swap_indices(idx_a, idx_b);
         }
-    }
-
-    pub fn retain<F: FnMut(&Window) -> bool>(&mut self, f: F) {
-        let mut f = f;
-        self.windows.retain(|tw| f(&tw.window));
-        self.update_focus();
     }
 }

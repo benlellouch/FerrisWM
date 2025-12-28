@@ -10,3 +10,4 @@ xcb = {version="1.6.0", features = ["xkb"]}
 xkbcommon = { version = "0.9", features = ["x11"] }
 log = "0.4"
 env_logger = "0.11.8"
+indexmap = "2.12.1"

@@ -341,19 +341,22 @@ impl WindowManager {
 
     fn configure_windows(&self, workspace_id: usize) {
         if let Some(workspace) = self.get_workspace(workspace_id) {
-            let tiled_windows: Vec<_> = workspace.iter_tiled_windows().collect();
-            if tiled_windows.is_empty() {
+            let clients: Vec<_> = workspace
+                .iter_clients()
+                .filter(|client| client.is_mapped())
+                .collect();
+            if clients.is_empty() {
                 debug!("No windows to configure");
                 return;
             }
 
-            let total_size: u32 = tiled_windows.iter().map(|tw| tw.size()).sum();
+            let total_size: u32 = clients.iter().map(|client| client.size()).sum();
             let border_width = self.border_width + self.window_gap;
             let inner_h = (self.screen_height_usable - 2 * border_width).max(1);
             let screen_partitions = self.screen_width / total_size;
 
             let mut cumulative = 0u32;
-            let config_cookies: Vec<_> = tiled_windows
+            let config_cookies: Vec<_> = clients
                 .iter()
                 .map(|twin| {
                     let cell = (self.screen_width * twin.size()) / total_size;
@@ -398,7 +401,7 @@ impl WindowManager {
 
     fn set_focus(&mut self, idx: usize) {
         // Reset border on old focused window (if any)
-        if let Some(old_window) = self.current_workspace().get_focused_window().copied() {
+        if let Some(old_window) = self.current_workspace().get_focused_window() {
             self.unfocus_window(old_window);
             debug!("Reset border on old focused window");
         }
@@ -406,7 +409,7 @@ impl WindowManager {
         self.current_workspace_mut().set_focus(idx);
 
         // Set border on window to be focused (if present)
-        if let Some(new_focus_window) = self.current_workspace().get_focused_window().copied() {
+        if let Some(new_focus_window) = self.current_workspace().get_focused_window() {
             self.focus_window(new_focus_window);
             let _ = self.conn.send_and_check_request(&x::SetInputFocus {
                 revert_to: x::InputFocus::PointerRoot,
@@ -521,14 +524,14 @@ impl WindowManager {
     }
 
     fn increase_window_weight(&mut self, increment: u32) {
-        if let Some(focused_win) = self.current_workspace_mut().get_focused_tiled_window_mut() {
+        if let Some(focused_win) = self.current_workspace_mut().get_focused_client_mut() {
             focused_win.increase_window_size(increment);
             self.configure_windows(self.workspace);
         }
     }
 
     fn decrease_window_weight(&mut self, increment: u32) {
-        if let Some(focused_win) = self.current_workspace_mut().get_focused_tiled_window_mut() {
+        if let Some(focused_win) = self.current_workspace_mut().get_focused_client_mut() {
             focused_win.decrease_window_size(increment);
             self.configure_windows(self.workspace);
         }
@@ -662,8 +665,17 @@ impl WindowManager {
             }
         } else {
             // Regular window - add to current workspace
-            self.current_workspace_mut().push_window(window);
-            self.configure_windows(self.workspace);
+            match self
+                .current_workspace_mut()
+                .get_client_mut(&window.resource_id())
+            {
+                Some(client) => {
+                    client.set_mapped(true);
+                }
+                None => {
+                    self.current_workspace_mut().push_window(window);
+                }
+            }
             match self.conn.send_and_check_request(&x::MapWindow { window }) {
                 Ok(_) => (),
                 Err(e) => {
@@ -672,6 +684,7 @@ impl WindowManager {
             }
             let idx = self.current_workspace().num_of_windows().saturating_sub(1);
             self.set_focus(idx);
+            self.configure_windows(self.workspace);
         }
     }
 
@@ -696,9 +709,22 @@ impl WindowManager {
             debug!("No window to destroy");
             return;
         }
-        curr_workspace.retain(|&win| win.resource_id() != window_id);
+        curr_workspace.remove_client(&window_id);
         self.shift_focus(0);
         self.configure_windows(self.workspace);
+    }
+
+    fn handle_unmap_event(&mut self, window: Window) {
+        if let Some(client) = self
+            .current_workspace_mut()
+            .get_client_mut(&window.resource_id())
+        {
+            if client.is_mapped() {
+                client.set_mapped(false);
+                self.shift_focus(-1);
+                self.configure_windows(self.workspace);
+            }
+        }
     }
 
     /*
@@ -748,7 +774,7 @@ impl WindowManager {
 
                 xcb::Event::X(x::Event::UnmapNotify(ev)) => {
                     debug!("Received UnmapNotify event for window {:?}", ev.window());
-                    // self.handle_destroy_event(ev.window());
+                    self.handle_unmap_event(ev.window());
                 }
 
                 xcb::Event::X(x::Event::MapNotify(ev)) => {
