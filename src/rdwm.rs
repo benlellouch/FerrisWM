@@ -103,9 +103,7 @@ impl WindowManager {
 
     */
 
-    fn initialize_config(
-        conn: &Connection,
-    ) -> WindowManagerConfig {
+    fn initialize_config(conn: &Connection) -> WindowManagerConfig {
         let (keysyms, keysyms_per_keycode) = fetch_keyboard_mapping(conn);
         let key_bindings = populate_key_bindings(conn, &keysyms, keysyms_per_keycode);
         let screen_config = Self::setup_screen(conn);
@@ -441,6 +439,49 @@ impl WindowManager {
         });
     }
 
+    fn supports_wm_delete(&self, window: Window) -> Result<bool, xcb::Error> {
+        let cookie = self.conn.send_request(&x::GetProperty {
+            delete: false,
+            window: window,
+            property: self.atoms.wm_protocols,
+            r#type: x::ATOM_ATOM,
+            long_offset: 0,
+            long_length: 1024, // plenty for protocol list
+        });
+
+        let reply = self.conn.wait_for_reply(cookie)?;
+
+        // In xcb, for type ATOM, the value is raw bytes of 32-bit atom ids.
+        // reply.value::<x::Atom>() gives a typed slice.
+        let atoms_list: &[x::Atom] = reply.value();
+        Ok(atoms_list.iter().any(|a| *a == self.atoms.wm_delete_window))
+    }
+
+    fn send_wm_delete(&self, window: x::Window) -> Result<(), xcb::Error> {
+        // X11 ClientMessage data is 5x 32-bit.
+        // Per ICCCM: data[0] = WM_DELETE_WINDOW atom, data[1] = timestamp.
+        let ev = x::ClientMessageEvent::new(
+            window,
+            self.atoms.wm_protocols,
+            x::ClientMessageData::Data32([
+                self.atoms.wm_delete_window.resource_id(),
+                x::CURRENT_TIME,
+                0,
+                0,
+                0,
+            ]),
+        );
+
+        self.conn.send_and_check_request(&x::SendEvent {
+            propagate: false,
+            destination: x::SendEventDest::Window(window),
+            event_mask: x::EventMask::NO_EVENT,
+            event: &ev,
+        })?;
+
+        Ok(())
+    }
+
     /*
 
       ▄    ▄▄ ▗▄▄▄▖ ▄▄▄  ▗▄▖ ▗▄ ▗▖     ▗▖ ▗▖  ▄  ▗▄ ▗▖▗▄▄  ▗▖   ▗▄▄▄▖▗▄▄▖  ▗▄▖
@@ -473,16 +514,31 @@ impl WindowManager {
     }
 
     fn kill_client(&mut self) {
-        if let Some(window_to_kill) = self.current_workspace_mut().removed_focused_window() {
-            info!("Killing client window: {window_to_kill:?}");
+        if let Some(window) = self.current_workspace_mut().removed_focused_window() {
+            info!("Killing client window: {window:?}");
 
-            // Send KillClient request
-            match self.conn.send_and_check_request(&x::KillClient {
-                resource: window_to_kill.resource_id(),
-            }) {
-                Ok(()) => info!("Successfully killed window: {window_to_kill:?}"),
-                Err(e) => error!("Failed to kill window {window_to_kill:?}: {e:?}"),
+            match self.supports_wm_delete(window) {
+                Ok(true) => {
+                    info!("Sending WM_DELETE_WINDOW message to window: {window:?}");
+                    if let Err(e) = self.send_wm_delete(window) {
+                        error!("Failed to send window delete for {window:?}: {e:?}. Falling back to force kill");
+                        self.force_kill_client(window);
+                    }
+                }
+                _ => {
+                    error!("Window {window:?} does not support WM_DELETE_WINDOW or failed to query WM_PROTOCOLS. Falling back to force kill.");
+                    self.force_kill_client(window);
+                }
             }
+        }
+    }
+
+    fn force_kill_client(&self, window: Window) {
+        match self.conn.send_and_check_request(&x::KillClient {
+            resource: window.resource_id(),
+        }) {
+            Ok(()) => info!("Successfully killed window: {window:?}"),
+            Err(e) => error!("Failed to kill window {window:?}: {e:?}"),
         }
     }
 
@@ -573,12 +629,16 @@ impl WindowManager {
             })
             .collect();
 
-        for cookie in new_wspace_cookies { {
-            let _ = self.conn.check_request(cookie);
-        } }    
-        for cookie in old_wspace_cookies { {
-            let _ = self.conn.check_request(cookie);
-        } }
+        for cookie in new_wspace_cookies {
+            {
+                let _ = self.conn.check_request(cookie);
+            }
+        }
+        for cookie in old_wspace_cookies {
+            {
+                let _ = self.conn.check_request(cookie);
+            }
+        }
         self.update_current_workspace();
         if let Some(focus) = self.current_workspace().get_focus() {
             self.set_focus(focus);
@@ -642,9 +702,7 @@ impl WindowManager {
                 ActionEvent::DecreaseWindowGap(increment) => self.decrease_window_gap(*increment),
             }
         } else {
-            error!(
-                "No binding found for keycode: {keycode} with modifiers: {modifiers:?}",
-            );
+            error!("No binding found for keycode: {keycode} with modifiers: {modifiers:?}",);
         }
     }
 
