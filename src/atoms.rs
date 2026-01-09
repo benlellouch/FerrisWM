@@ -26,7 +26,7 @@ impl Atoms {
         let wm_window_type_dock = Self::intern_atom(conn, "_NET_WM_WINDOW_TYPE_DOCK");
         let wm_protocols = Self::intern_atom(conn, "WM_PROTOCOLS");
         let wm_delete_window = Self::intern_atom(conn, "WM_DELETE_WINDOW");
-        let wm_desktop = Self::intern_atom(conn, "WM_NET_DESKTOP");
+        let wm_desktop = Self::intern_atom(conn, "_NET_WM_DESKTOP");
 
         Self {
             number_of_desktops,
@@ -97,7 +97,7 @@ impl Atoms {
             property: prop,
             r#type: x::ATOM_CARDINAL,
             long_offset: 0,
-            long_length: 32,
+            long_length: 1,
         });
 
         if let Ok(reply) = conn.wait_for_reply(cookie) {

@@ -17,14 +17,12 @@ impl Client {
         self.size
     }
 
-    pub const fn increase_window_size(&mut self, increment: u32) {
-        self.size += increment;
+    pub fn increase_window_size(&mut self, increment: u32) {
+        self.size = self.size.saturating_add(increment);
     }
 
-    pub const fn decrease_window_size(&mut self, increment: u32) {
-        if self.size > 1 {
-            self.size -= increment;
-        }
+    pub fn decrease_window_size(&mut self, decrement: u32) {
+        self.size = self.size.saturating_sub(decrement).max(1);
     }
 
     pub const fn is_mapped(&self) -> bool {

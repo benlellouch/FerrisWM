@@ -6,6 +6,7 @@ use xkbcommon::xkb;
 pub const NUM_WORKSPACES: usize = 10;
 pub const DEFAULT_BORDER_WIDTH: u32 = 3;
 pub const DEFAULT_WINDOW_GAP: u32 = 0;
+pub const DEFAULT_DOCK_HEIGHT: u32 = 30;
 
 const TESTING: Option<&str> = option_env!("WM_TESTING");
 const MOD: ModMask = if TESTING.is_none() {
@@ -30,7 +31,7 @@ macro_rules! binding {
 pub static ACTION_MAPPINGS: &[ActionMapping] = &[
     // ==================== SPAWN BINDINGS ====================
     binding!(xkb::Keysym::Return, [MOD], ActionEvent::Spawn("st")),
-    binding!(xkb::Keysym::Return, [MOD, SHIFT], ActionEvent::Spawn("google-chrome-stable")),
+    binding!(xkb::Keysym::Return, [MOD, SHIFT], ActionEvent::Spawn("x-www-browser")),
     binding!(xkb::Keysym::space, [MOD], ActionEvent::Spawn("rofi -show drun")),
     binding!(xkb::Keysym::r, [MOD,SHIFT], ActionEvent::Spawn("pkill -x rdwm")), // Reload the WM
 

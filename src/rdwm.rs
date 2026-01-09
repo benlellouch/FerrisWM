@@ -7,7 +7,9 @@ use xcb::{
 };
 
 use crate::atoms::Atoms;
-use crate::config::{DEFAULT_BORDER_WIDTH, DEFAULT_WINDOW_GAP, NUM_WORKSPACES};
+use crate::config::{
+    DEFAULT_BORDER_WIDTH, DEFAULT_DOCK_HEIGHT, DEFAULT_WINDOW_GAP, NUM_WORKSPACES,
+};
 use crate::key_mapping::ActionEvent;
 use crate::keyboard::{fetch_keyboard_mapping, populate_key_bindings, set_keygrabs};
 use crate::workspace::Workspace;
@@ -56,8 +58,10 @@ impl WindowManager {
         // Create WM check window
         let wm_check_window = Self::create_wm_check_window(&conn, config.root_window);
 
-        let dock_height = 30u32;
-        let screen_height_usable = config.screen_config.height.saturating_sub(dock_height);
+        let screen_height_usable = config
+            .screen_config
+            .height
+            .saturating_sub(DEFAULT_DOCK_HEIGHT);
 
         let wm = Self {
             conn,
@@ -75,7 +79,7 @@ impl WindowManager {
             root_window: config.root_window,
             wm_check_window,
             dock_windows: Vec::new(),
-            dock_height,
+            dock_height: DEFAULT_DOCK_HEIGHT,
         };
 
         // Get root window and set up substructure redirect
@@ -625,9 +629,10 @@ impl WindowManager {
         self.configure_windows(self.workspace);
     }
 
-    fn decrease_window_gap(&mut self, increment: u32) {
-        if self.window_gap > 0 {
-            self.window_gap -= increment;
+    fn decrease_window_gap(&mut self, decrement: u32) {
+        let new_gap = self.window_gap.saturating_sub(decrement);
+        if new_gap != self.window_gap {
+            self.window_gap = new_gap;
             self.configure_windows(self.workspace);
         }
     }
