@@ -1,6 +1,10 @@
-# rdwm
+<p align="center">
+  <img src="resources/ferris_wm.png" width="300" />
+</p>
 
-rdwm is a small, minimalist dynamic window manager written in Rust using XCB.
+#  <p style="text-align: center;"> RDWM </p>
+
+RDWM is a small, minimalist tiling window manager written in Rust using XCB.
 
 ## Features
 - **Tiling layout:** Minimal dynamic horizontal tiling that divides the screen evenly across visible windows, with per-client "weight" sizes.
