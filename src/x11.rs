@@ -71,19 +71,9 @@ impl X11 {
 
     pub fn send_effect_unchecked(&self, effect: &Effect) {
         match effect {
-            Effect::Map(window) => {
-                self.conn.send_request(&x::MapWindow { window: *window });
-            }
-            Effect::Unmap(window) => {
-                self.conn.send_request(&x::UnmapWindow { window: *window });
-            }
-            Effect::Focus(window) => {
-                self.conn.send_request(&x::SetInputFocus {
-                    revert_to: x::InputFocus::PointerRoot,
-                    focus: *window,
-                    time: x::CURRENT_TIME,
-                });
-            }
+            Effect::Map(window) => self.map_window_unchecked(*window),
+            Effect::Unmap(window) => self.unmap_window_unchecked(*window),
+            Effect::Focus(window) => self.focus_window_unchecked(*window),
             Effect::Configure {
                 window,
                 x,
@@ -91,138 +81,45 @@ impl X11 {
                 w,
                 h,
                 border,
-            } => {
-                let config_values = [
-                    x::ConfigWindow::X(*x),
-                    x::ConfigWindow::Y(*y),
-                    x::ConfigWindow::Width(*w),
-                    x::ConfigWindow::Height(*h),
-                    x::ConfigWindow::BorderWidth(*border),
-                ];
-                self.conn.send_request(&x::ConfigureWindow {
-                    window: *window,
-                    value_list: &config_values,
-                });
-            }
+            } => self.configure_window_unchecked(*window, *x, *y, *w, *h, *border),
             Effect::ConfigurePositionSize { window, x, y, w, h } => {
-                let config_values = [
-                    x::ConfigWindow::X(*x),
-                    x::ConfigWindow::Y(*y),
-                    x::ConfigWindow::Width(*w),
-                    x::ConfigWindow::Height(*h),
-                ];
-                self.conn.send_request(&x::ConfigureWindow {
-                    window: *window,
-                    value_list: &config_values,
-                });
+                self.configure_window_position_size_unchecked(*window, *x, *y, *w, *h)
             }
             Effect::SetBorder {
                 window,
                 pixel,
                 width,
-            } => {
-                self.conn.send_request(&x::ChangeWindowAttributes {
-                    window: *window,
-                    value_list: &[x::Cw::BorderPixel(*pixel)],
-                });
-                self.conn.send_request(&x::ConfigureWindow {
-                    window: *window,
-                    value_list: &[x::ConfigWindow::BorderWidth(*width)],
-                });
-            }
+            } => self.set_border_unchecked(*window, *pixel, *width),
             Effect::SetCardinal32 {
                 window,
                 atom,
                 value,
-            } => {
-                self.conn.send_request(&x::ChangeProperty {
-                    mode: x::PropMode::Replace,
-                    window: *window,
-                    property: *atom,
-                    r#type: x::ATOM_CARDINAL,
-                    data: &[*value],
-                });
-            }
+            } => self.set_cardinal32_unchecked(*window, *atom, *value),
             Effect::SetAtomList {
                 window,
                 atom,
                 values,
-            } => {
-                self.conn.send_request(&x::ChangeProperty {
-                    mode: x::PropMode::Replace,
-                    window: *window,
-                    property: *atom,
-                    r#type: x::ATOM_ATOM,
-                    data: values,
-                });
-            }
+            } => self.set_atom_list_unchecked(*window, *atom, values),
             Effect::SetWindowProperty {
                 window,
                 atom,
                 values,
-            } => {
-                self.conn.send_request(&x::ChangeProperty {
-                    mode: x::PropMode::Replace,
-                    window: *window,
-                    property: *atom,
-                    r#type: x::ATOM_WINDOW,
-                    data: values,
-                });
-            }
-            Effect::KillClient(window) => {
-                self.conn.send_request(&x::KillClient {
-                    resource: window.resource_id(),
-                });
-            }
-            Effect::SendWmDelete(window) => {
-                let ev = x::ClientMessageEvent::new(
-                    *window,
-                    self.atoms.wm_protocols,
-                    x::ClientMessageData::Data32([
-                        self.atoms.wm_delete_window.resource_id(),
-                        x::CURRENT_TIME,
-                        0,
-                        0,
-                        0,
-                    ]),
-                );
-                self.conn.send_request(&x::SendEvent {
-                    propagate: false,
-                    destination: x::SendEventDest::Window(*window),
-                    event_mask: x::EventMask::NO_EVENT,
-                    event: &ev,
-                });
-            }
+            } => self.set_window_property_unchecked(*window, *atom, values),
+            Effect::KillClient(window) => self.kill_client_unchecked(*window),
+            Effect::SendWmDelete(window) => self.send_wm_delete_unchecked(*window),
             Effect::GrabKey {
                 keycode,
                 modifiers,
                 grab_window,
-            } => {
-                self.conn.send_request(&x::GrabKey {
-                    owner_events: false,
-                    grab_window: *grab_window,
-                    modifiers: *modifiers,
-                    key: *keycode,
-                    pointer_mode: x::GrabMode::Async,
-                    keyboard_mode: x::GrabMode::Async,
-                });
-            }
+            } => self.grab_key_unchecked(*keycode, *modifiers, *grab_window),
         }
     }
 
     pub fn send_effect_checked(&self, effect: &Effect) -> Vec<VoidCookieChecked> {
         match effect {
-            Effect::Map(window) => vec![self
-                .conn
-                .send_request_checked(&x::MapWindow { window: *window })],
-            Effect::Unmap(window) => vec![self
-                .conn
-                .send_request_checked(&x::UnmapWindow { window: *window })],
-            Effect::Focus(window) => vec![self.conn.send_request_checked(&x::SetInputFocus {
-                revert_to: x::InputFocus::PointerRoot,
-                focus: *window,
-                time: x::CURRENT_TIME,
-            })],
+            Effect::Map(window) => self.map_window_checked(*window),
+            Effect::Unmap(window) => self.unmap_window_checked(*window),
+            Effect::Focus(window) => self.focus_window_checked(*window),
             Effect::Configure {
                 window,
                 x,
@@ -230,102 +127,315 @@ impl X11 {
                 w,
                 h,
                 border,
-            } => vec![self.configure_window_checked(*window, *x, *y, *w, *h, *border)],
+            } => self.configure_window_checked_effect(*window, *x, *y, *w, *h, *border),
             Effect::ConfigurePositionSize { window, x, y, w, h } => {
-                let config_values = [
-                    x::ConfigWindow::X(*x),
-                    x::ConfigWindow::Y(*y),
-                    x::ConfigWindow::Width(*w),
-                    x::ConfigWindow::Height(*h),
-                ];
-                vec![self.conn.send_request_checked(&x::ConfigureWindow {
-                    window: *window,
-                    value_list: &config_values,
-                })]
+                self.configure_window_position_size_checked(*window, *x, *y, *w, *h)
             }
             Effect::SetBorder {
                 window,
                 pixel,
                 width,
-            } => {
-                let a = self.conn.send_request_checked(&x::ChangeWindowAttributes {
-                    window: *window,
-                    value_list: &[x::Cw::BorderPixel(*pixel)],
-                });
-                let b = self.conn.send_request_checked(&x::ConfigureWindow {
-                    window: *window,
-                    value_list: &[x::ConfigWindow::BorderWidth(*width)],
-                });
-                vec![a, b]
-            }
+            } => self.set_border_checked(*window, *pixel, *width),
             Effect::SetCardinal32 {
                 window,
                 atom,
                 value,
-            } => vec![self.conn.send_request_checked(&x::ChangeProperty {
-                mode: x::PropMode::Replace,
-                window: *window,
-                property: *atom,
-                r#type: x::ATOM_CARDINAL,
-                data: &[*value],
-            })],
+            } => self.set_cardinal32_checked(*window, *atom, *value),
             Effect::SetAtomList {
                 window,
                 atom,
                 values,
-            } => vec![self.conn.send_request_checked(&x::ChangeProperty {
-                mode: x::PropMode::Replace,
-                window: *window,
-                property: *atom,
-                r#type: x::ATOM_ATOM,
-                data: values,
-            })],
+            } => self.set_atom_list_checked(*window, *atom, values),
             Effect::SetWindowProperty {
                 window,
                 atom,
                 values,
-            } => vec![self.conn.send_request_checked(&x::ChangeProperty {
-                mode: x::PropMode::Replace,
-                window: *window,
-                property: *atom,
-                r#type: x::ATOM_WINDOW,
-                data: values,
-            })],
-            Effect::KillClient(window) => vec![self.conn.send_request_checked(&x::KillClient {
-                resource: window.resource_id(),
-            })],
-            Effect::SendWmDelete(window) => {
-                let ev = x::ClientMessageEvent::new(
-                    *window,
-                    self.atoms.wm_protocols,
-                    x::ClientMessageData::Data32([
-                        self.atoms.wm_delete_window.resource_id(),
-                        x::CURRENT_TIME,
-                        0,
-                        0,
-                        0,
-                    ]),
-                );
-                vec![self.conn.send_request_checked(&x::SendEvent {
-                    propagate: false,
-                    destination: x::SendEventDest::Window(*window),
-                    event_mask: x::EventMask::NO_EVENT,
-                    event: &ev,
-                })]
-            }
+            } => self.set_window_property_checked(*window, *atom, values),
+            Effect::KillClient(window) => self.kill_client_checked(*window),
+            Effect::SendWmDelete(window) => self.send_wm_delete_checked(*window),
             Effect::GrabKey {
                 keycode,
                 modifiers,
                 grab_window,
-            } => vec![self.conn.send_request_checked(&x::GrabKey {
-                owner_events: false,
-                grab_window: *grab_window,
-                modifiers: *modifiers,
-                key: *keycode,
-                pointer_mode: x::GrabMode::Async,
-                keyboard_mode: x::GrabMode::Async,
-            })],
+            } => self.grab_key_checked(*keycode, *modifiers, *grab_window),
         }
+    }
+
+    fn map_window_unchecked(&self, window: Window) {
+        self.conn.send_request(&x::MapWindow { window });
+    }
+
+    fn unmap_window_unchecked(&self, window: Window) {
+        self.conn.send_request(&x::UnmapWindow { window });
+    }
+
+    fn focus_window_unchecked(&self, window: Window) {
+        self.conn.send_request(&x::SetInputFocus {
+            revert_to: x::InputFocus::PointerRoot,
+            focus: window,
+            time: x::CURRENT_TIME,
+        });
+    }
+
+    fn configure_window_unchecked(
+        &self,
+        window: Window,
+        x: i32,
+        y: i32,
+        w: u32,
+        h: u32,
+        border: u32,
+    ) {
+        let config_values = [
+            x::ConfigWindow::X(x),
+            x::ConfigWindow::Y(y),
+            x::ConfigWindow::Width(w),
+            x::ConfigWindow::Height(h),
+            x::ConfigWindow::BorderWidth(border),
+        ];
+        self.conn.send_request(&x::ConfigureWindow {
+            window,
+            value_list: &config_values,
+        });
+    }
+
+    fn configure_window_position_size_unchecked(
+        &self,
+        window: Window,
+        x: i32,
+        y: i32,
+        w: u32,
+        h: u32,
+    ) {
+        let config_values = [
+            x::ConfigWindow::X(x),
+            x::ConfigWindow::Y(y),
+            x::ConfigWindow::Width(w),
+            x::ConfigWindow::Height(h),
+        ];
+        self.conn.send_request(&x::ConfigureWindow {
+            window,
+            value_list: &config_values,
+        });
+    }
+
+    fn set_border_unchecked(&self, window: Window, pixel: u32, width: u32) {
+        self.conn.send_request(&x::ChangeWindowAttributes {
+            window,
+            value_list: &[x::Cw::BorderPixel(pixel)],
+        });
+        self.conn.send_request(&x::ConfigureWindow {
+            window,
+            value_list: &[x::ConfigWindow::BorderWidth(width)],
+        });
+    }
+
+    fn set_cardinal32_unchecked(&self, window: Window, atom: x::Atom, value: u32) {
+        self.conn.send_request(&x::ChangeProperty {
+            mode: x::PropMode::Replace,
+            window,
+            property: atom,
+            r#type: x::ATOM_CARDINAL,
+            data: &[value],
+        });
+    }
+
+    fn set_atom_list_unchecked(&self, window: Window, atom: x::Atom, values: &[u32]) {
+        self.conn.send_request(&x::ChangeProperty {
+            mode: x::PropMode::Replace,
+            window,
+            property: atom,
+            r#type: x::ATOM_ATOM,
+            data: values,
+        });
+    }
+
+    fn set_window_property_unchecked(&self, window: Window, atom: x::Atom, values: &[u32]) {
+        self.conn.send_request(&x::ChangeProperty {
+            mode: x::PropMode::Replace,
+            window,
+            property: atom,
+            r#type: x::ATOM_WINDOW,
+            data: values,
+        });
+    }
+
+    fn kill_client_unchecked(&self, window: Window) {
+        self.conn.send_request(&x::KillClient {
+            resource: window.resource_id(),
+        });
+    }
+
+    fn send_wm_delete_unchecked(&self, window: Window) {
+        let ev = self.wm_delete_client_message(window);
+        self.conn.send_request(&x::SendEvent {
+            propagate: false,
+            destination: x::SendEventDest::Window(window),
+            event_mask: x::EventMask::NO_EVENT,
+            event: &ev,
+        });
+    }
+
+    fn grab_key_unchecked(&self, keycode: u8, modifiers: x::ModMask, grab_window: Window) {
+        self.conn.send_request(&x::GrabKey {
+            owner_events: false,
+            grab_window,
+            modifiers,
+            key: keycode,
+            pointer_mode: x::GrabMode::Async,
+            keyboard_mode: x::GrabMode::Async,
+        });
+    }
+
+    fn map_window_checked(&self, window: Window) -> Vec<VoidCookieChecked> {
+        vec![self.conn.send_request_checked(&x::MapWindow { window })]
+    }
+
+    fn unmap_window_checked(&self, window: Window) -> Vec<VoidCookieChecked> {
+        vec![self.conn.send_request_checked(&x::UnmapWindow { window })]
+    }
+
+    fn focus_window_checked(&self, window: Window) -> Vec<VoidCookieChecked> {
+        vec![self.conn.send_request_checked(&x::SetInputFocus {
+            revert_to: x::InputFocus::PointerRoot,
+            focus: window,
+            time: x::CURRENT_TIME,
+        })]
+    }
+
+    fn configure_window_checked_effect(
+        &self,
+        window: Window,
+        x: i32,
+        y: i32,
+        w: u32,
+        h: u32,
+        border: u32,
+    ) -> Vec<VoidCookieChecked> {
+        vec![self.configure_window_checked(window, x, y, w, h, border)]
+    }
+
+    fn configure_window_position_size_checked(
+        &self,
+        window: Window,
+        x: i32,
+        y: i32,
+        w: u32,
+        h: u32,
+    ) -> Vec<VoidCookieChecked> {
+        let config_values = [
+            x::ConfigWindow::X(x),
+            x::ConfigWindow::Y(y),
+            x::ConfigWindow::Width(w),
+            x::ConfigWindow::Height(h),
+        ];
+        vec![self.conn.send_request_checked(&x::ConfigureWindow {
+            window,
+            value_list: &config_values,
+        })]
+    }
+
+    fn set_border_checked(&self, window: Window, pixel: u32, width: u32) -> Vec<VoidCookieChecked> {
+        let a = self.conn.send_request_checked(&x::ChangeWindowAttributes {
+            window,
+            value_list: &[x::Cw::BorderPixel(pixel)],
+        });
+        let b = self.conn.send_request_checked(&x::ConfigureWindow {
+            window,
+            value_list: &[x::ConfigWindow::BorderWidth(width)],
+        });
+        vec![a, b]
+    }
+
+    fn set_cardinal32_checked(
+        &self,
+        window: Window,
+        atom: x::Atom,
+        value: u32,
+    ) -> Vec<VoidCookieChecked> {
+        vec![self.conn.send_request_checked(&x::ChangeProperty {
+            mode: x::PropMode::Replace,
+            window,
+            property: atom,
+            r#type: x::ATOM_CARDINAL,
+            data: &[value],
+        })]
+    }
+
+    fn set_atom_list_checked(
+        &self,
+        window: Window,
+        atom: x::Atom,
+        values: &[u32],
+    ) -> Vec<VoidCookieChecked> {
+        vec![self.conn.send_request_checked(&x::ChangeProperty {
+            mode: x::PropMode::Replace,
+            window,
+            property: atom,
+            r#type: x::ATOM_ATOM,
+            data: values,
+        })]
+    }
+
+    fn set_window_property_checked(
+        &self,
+        window: Window,
+        atom: x::Atom,
+        values: &[u32],
+    ) -> Vec<VoidCookieChecked> {
+        vec![self.conn.send_request_checked(&x::ChangeProperty {
+            mode: x::PropMode::Replace,
+            window,
+            property: atom,
+            r#type: x::ATOM_WINDOW,
+            data: values,
+        })]
+    }
+
+    fn kill_client_checked(&self, window: Window) -> Vec<VoidCookieChecked> {
+        vec![self.conn.send_request_checked(&x::KillClient {
+            resource: window.resource_id(),
+        })]
+    }
+
+    fn send_wm_delete_checked(&self, window: Window) -> Vec<VoidCookieChecked> {
+        let ev = self.wm_delete_client_message(window);
+        vec![self.conn.send_request_checked(&x::SendEvent {
+            propagate: false,
+            destination: x::SendEventDest::Window(window),
+            event_mask: x::EventMask::NO_EVENT,
+            event: &ev,
+        })]
+    }
+
+    fn grab_key_checked(
+        &self,
+        keycode: u8,
+        modifiers: x::ModMask,
+        grab_window: Window,
+    ) -> Vec<VoidCookieChecked> {
+        vec![self.conn.send_request_checked(&x::GrabKey {
+            owner_events: false,
+            grab_window,
+            modifiers,
+            key: keycode,
+            pointer_mode: x::GrabMode::Async,
+            keyboard_mode: x::GrabMode::Async,
+        })]
+    }
+
+    fn wm_delete_client_message(&self, window: Window) -> x::ClientMessageEvent {
+        x::ClientMessageEvent::new(
+            window,
+            self.atoms.wm_protocols,
+            x::ClientMessageData::Data32([
+                self.atoms.wm_delete_window.resource_id(),
+                x::CURRENT_TIME,
+                0,
+                0,
+                0,
+            ]),
+        )
     }
 
     pub fn flush(&self) -> xcb::Result<()> {
@@ -390,8 +500,24 @@ impl X11 {
         Ok(atoms_list.contains(&self.atoms.wm_delete_window))
     }
 
-    pub fn get_cardinal32(&self, window: Window, prop: x::Atom) -> Option<u32> {
-        Atoms::get_cardinal32(&self.conn, window, prop)
+    pub fn get_cardinal32(&self, window: x::Window, prop: x::Atom) -> Option<u32> {
+        let cookie = self.conn.send_request(&x::GetProperty {
+            delete: false,
+            window,
+            property: prop,
+            r#type: x::ATOM_CARDINAL,
+            long_offset: 0,
+            long_length: 1,
+        });
+
+        if let Ok(reply) = self.conn.wait_for_reply(cookie) {
+            let value: &[u32] = reply.value();
+            if !value.is_empty() {
+                return value.first().cloned();
+            }
+        }
+        error!("Failed to get Cardinal32 property for atom {prop:?} on {window:?}");
+        None
     }
 
     fn configure_window_checked(

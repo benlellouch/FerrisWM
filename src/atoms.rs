@@ -1,4 +1,3 @@
-use log::error;
 use xcb::x;
 use xcb::Connection;
 
@@ -47,25 +46,5 @@ impl Atoms {
         conn.wait_for_reply(cookie)
             .expect("If Interning Atom fails we don't want to start the WM")
             .atom()
-    }
-
-    pub fn get_cardinal32(conn: &Connection, window: x::Window, prop: x::Atom) -> Option<u32> {
-        let cookie = conn.send_request(&x::GetProperty {
-            delete: false,
-            window,
-            property: prop,
-            r#type: x::ATOM_CARDINAL,
-            long_offset: 0,
-            long_length: 1,
-        });
-
-        if let Ok(reply) = conn.wait_for_reply(cookie) {
-            let value: &[u32] = reply.value();
-            if !value.is_empty() {
-                return value.first().cloned();
-            }
-        }
-        error!("Failed to get Cardinal32 property for atom {prop:?} on {window:?}");
-        None
     }
 }
