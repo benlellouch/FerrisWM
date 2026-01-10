@@ -50,25 +50,3 @@ pub fn populate_key_bindings(
 
     key_bindings
 }
-
-pub fn set_keygrabs(
-    conn: &Connection,
-    key_bindings: &HashMap<(u8, ModMask), ActionEvent>,
-    root: x::Window,
-) {
-    for &(keycode, modifiers) in key_bindings.keys() {
-        match conn.send_and_check_request(&x::GrabKey {
-            owner_events: false,
-            grab_window: root,
-            modifiers,
-            key: keycode,
-            pointer_mode: x::GrabMode::Async,
-            keyboard_mode: x::GrabMode::Async,
-        }) {
-            Ok(()) => {
-                info!("Successfully grabbed key: keycode {keycode} with modifiers {modifiers:?}")
-            }
-            Err(e) => warn!("Failed to grab key {keycode}: {e:?}"),
-        }
-    }
-}

@@ -1,9 +1,9 @@
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use std::process::Command;
 use std::{collections::HashMap, process::Stdio};
 use xcb::{
-    x::{self, Cw, EventMask, ModMask, Window},
-    Connection, ProtocolError, VoidCookieChecked, Xid,
+    x::{self, ModMask, Window},
+    Connection, Xid,
 };
 
 use crate::atoms::Atoms;
@@ -11,8 +11,59 @@ use crate::config::{
     DEFAULT_BORDER_WIDTH, DEFAULT_DOCK_HEIGHT, DEFAULT_WINDOW_GAP, NUM_WORKSPACES,
 };
 use crate::key_mapping::ActionEvent;
-use crate::keyboard::{fetch_keyboard_mapping, populate_key_bindings, set_keygrabs};
+use crate::keyboard::{fetch_keyboard_mapping, populate_key_bindings};
+use crate::layout::{Layout, Rect};
 use crate::workspace::Workspace;
+use crate::x11::X11;
+
+#[derive(Debug, Clone)]
+pub enum Effect {
+    Map(Window),
+    Unmap(Window),
+    Configure {
+        window: Window,
+        x: i32,
+        y: i32,
+        w: u32,
+        h: u32,
+        border: u32,
+    },
+    ConfigurePositionSize {
+        window: Window,
+        x: i32,
+        y: i32,
+        w: u32,
+        h: u32,
+    },
+    Focus(Window),
+    SetBorder {
+        window: Window,
+        pixel: u32,
+        width: u32,
+    },
+    SetCardinal32 {
+        window: Window,
+        atom: x::Atom,
+        value: u32,
+    },
+    SetAtomList {
+        window: Window,
+        atom: x::Atom,
+        values: Vec<u32>,
+    },
+    SetWindowProperty {
+        window: Window,
+        atom: x::Atom,
+        values: Vec<u32>,
+    },
+    KillClient(Window),
+    SendWmDelete(Window),
+    GrabKey {
+        keycode: u8,
+        modifiers: ModMask,
+        grab_window: Window,
+    },
+}
 
 pub struct ScreenConfig {
     pub width: u32,
@@ -21,78 +72,82 @@ pub struct ScreenConfig {
     pub normal_border_pixel: u32,
 }
 
-pub struct WindowManagerConfig {
-    pub key_bindings: HashMap<(u8, ModMask), ActionEvent>,
-    pub screen_config: ScreenConfig,
-    pub atoms: Atoms,
-    pub root_window: Window,
-}
-
-pub struct WindowManager {
-    conn: Connection,
+pub struct WindowManager<T: Layout> {
+    x11: X11,
     workspaces: [Workspace; NUM_WORKSPACES],
-    workspace: usize,
+    current_workspace: usize,
     key_bindings: HashMap<(u8, ModMask), ActionEvent>,
-    screen_width: u32,
-    screen_height: u32,
-    screen_height_usable: u32,
-    focused_border_pixel: u32,
-    normal_border_pixel: u32,
+    screen: ScreenConfig,
     border_width: u32,
     window_gap: u32,
-    atoms: Atoms,
-    root_window: Window,
-    wm_check_window: Window,
+    layout: T,
     dock_windows: Vec<Window>,
     dock_height: u32,
 }
 
-impl WindowManager {
-    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+impl<T: Layout> WindowManager<T> {
+    pub fn new(layout: T) -> Result<Self, Box<dyn std::error::Error>> {
         let (conn, _) = Connection::connect(None)?;
         info!("Connected to X.");
 
-        // Initialize configuration before creating WindowManager
-        let config = Self::initialize_config(&conn);
+        let key_bindings = Self::setup_key_bindings(&conn);
+        let screen = Self::setup_screen(&conn);
+        let atoms = Atoms::initialize(&conn);
+        let root_window = Self::get_root_window(&conn);
 
         // Create WM check window
-        let wm_check_window = Self::create_wm_check_window(&conn, config.root_window);
+        let wm_check_window = Self::create_wm_check_window(&conn, root_window);
 
-        let screen_height_usable = config
-            .screen_config
-            .height
-            .saturating_sub(DEFAULT_DOCK_HEIGHT);
+        let x11 = X11::new(conn, root_window, atoms, wm_check_window);
 
         let wm = Self {
-            conn,
+            x11,
             workspaces: Default::default(),
-            workspace: 0,
-            key_bindings: config.key_bindings,
-            screen_width: config.screen_config.width,
-            screen_height: config.screen_config.height,
-            screen_height_usable,
-            focused_border_pixel: config.screen_config.focused_border_pixel,
-            normal_border_pixel: config.screen_config.normal_border_pixel,
+            current_workspace: 0,
+            key_bindings,
+            screen,
             border_width: DEFAULT_BORDER_WIDTH,
             window_gap: DEFAULT_WINDOW_GAP,
-            atoms: config.atoms,
-            root_window: config.root_window,
-            wm_check_window,
+            layout,
             dock_windows: Vec::new(),
             dock_height: DEFAULT_DOCK_HEIGHT,
         };
 
         // Get root window and set up substructure redirect
-        wm.set_substructure_redirect()?;
+        wm.x11.set_root_event_mask()?;
         info!("Successfully set substructure redirect");
 
         // Set up key grabs
-        set_keygrabs(&wm.conn, &wm.key_bindings, wm.root_window());
+        wm.apply_effects(wm.keygrab_effects());
 
         // Set up EWMH hints
-        wm.publish_ewmh_hints();
+        wm.apply_effects(wm.publish_ewmh_hints());
 
         Ok(wm)
+    }
+
+    fn usable_screen_height(&self) -> u32 {
+        self.screen.height.saturating_sub(self.dock_height)
+    }
+
+    fn apply_effects(&self, effects: Vec<Effect>) {
+        for fx in effects {
+            if let Err(e) = self.x11.apply(fx) {
+                error!("Failed to apply effect: {e:?}");
+            }
+        }
+    }
+
+    fn keygrab_effects(&self) -> Vec<Effect> {
+        let mut effects = Vec::with_capacity(self.key_bindings.len());
+        for &(keycode, modifiers) in self.key_bindings.keys() {
+            effects.push(Effect::GrabKey {
+                keycode,
+                modifiers,
+                grab_window: self.x11.root(),
+            });
+        }
+        effects
     }
 
     /*
@@ -107,19 +162,9 @@ impl WindowManager {
 
     */
 
-    fn initialize_config(conn: &Connection) -> WindowManagerConfig {
+    fn setup_key_bindings(conn: &Connection) -> HashMap<(u8, ModMask), ActionEvent> {
         let (keysyms, keysyms_per_keycode) = fetch_keyboard_mapping(conn);
-        let key_bindings = populate_key_bindings(conn, &keysyms, keysyms_per_keycode);
-        let screen_config = Self::setup_screen(conn);
-        let atoms = Atoms::initialize(conn);
-        let root_window = Self::get_root_window(conn);
-
-        WindowManagerConfig {
-            key_bindings,
-            screen_config,
-            atoms,
-            root_window,
-        }
+        populate_key_bindings(conn, &keysyms, keysyms_per_keycode)
     }
 
     fn setup_screen(conn: &Connection) -> ScreenConfig {
@@ -161,43 +206,6 @@ impl WindowManager {
         win
     }
 
-    fn set_substructure_redirect(&self) -> Result<(), ProtocolError> {
-        let values = [Cw::EventMask(
-            EventMask::SUBSTRUCTURE_REDIRECT
-                | EventMask::SUBSTRUCTURE_NOTIFY
-                | EventMask::KEY_PRESS,
-        )];
-        self.conn
-            .send_and_check_request(&x::ChangeWindowAttributes {
-                window: self.root_window(),
-                value_list: &values,
-            })
-    }
-
-    fn is_dock_window(&self, window: Window) -> bool {
-        // Query _NET_WM_WINDOW_TYPE property
-        let cookie = self.conn.send_request(&x::GetProperty {
-            delete: false,
-            window,
-            property: self.atoms.wm_window_type,
-            r#type: x::ATOM_ATOM,
-            long_offset: 0,
-            long_length: 32,
-        });
-
-        if let Ok(reply) = self.conn.wait_for_reply(cookie) {
-            let atoms_vec: &[x::Atom] = reply.value();
-            // Check if the window type includes _NET_WM_WINDOW_TYPE_DOCK
-            for atom in atoms_vec {
-                if atom.resource_id() == self.atoms.wm_window_type_dock.resource_id() {
-                    debug!("Window {window:?} identified as dock window");
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
     /*
 
     ▗▄▄▄▖▄   ▄▗▄ ▄▖▗▖ ▗▖
@@ -210,80 +218,75 @@ impl WindowManager {
 
     */
 
-    fn publish_ewmh_hints(&self) {
-        // Publish _NET_SUPPORTING_WM_CHECK on both root and check window
-        // This points the root window to the check window
-        Atoms::set_window_property(
-            &self.conn,
-            self.root_window(),
-            self.atoms.supporting_wm_check,
-            &[self.wm_check_window.resource_id()],
-        );
+    fn publish_ewmh_hints(&self) -> Vec<Effect> {
+        let atoms = self.x11.atoms();
+        let root = self.x11.root();
+        let check = self.x11.wm_check_window();
 
-        // The check window points to itself
-        Atoms::set_window_property(
-            &self.conn,
-            self.wm_check_window,
-            self.atoms.supporting_wm_check,
-            &[self.wm_check_window.resource_id()],
-        );
-
-        // Publish _NET_SUPPORTING - list of supported atoms
         let supported_atoms = [
-            self.atoms.supported,
-            self.atoms.supporting_wm_check,
-            self.atoms.number_of_desktops,
-            self.atoms.current_desktop,
-            self.atoms.wm_window_type,
-            self.atoms.wm_window_type_dock,
+            atoms.supported,
+            atoms.supporting_wm_check,
+            atoms.number_of_desktops,
+            atoms.current_desktop,
+            atoms.wm_window_type,
+            atoms.wm_window_type_dock,
         ];
 
-        Atoms::set_atom(
-            &self.conn,
-            self.root_window(),
-            self.atoms.supported,
-            &supported_atoms
-                .iter()
-                .map(xcb::Xid::resource_id)
-                .collect::<Vec<_>>(),
-        );
-
-        // Publish desktop information
-        Atoms::set_cardinal32(
-            &self.conn,
-            self.root_window(),
-            self.atoms.number_of_desktops,
-            &[NUM_WORKSPACES as u32],
-        );
-        Atoms::set_cardinal32(
-            &self.conn,
-            self.root_window(),
-            self.atoms.current_desktop,
-            &[0_u32],
-        );
-
-        info!("Published EWMH hints successfully");
+        vec![
+            Effect::SetWindowProperty {
+                window: root,
+                atom: atoms.supporting_wm_check,
+                values: vec![check.resource_id()],
+            },
+            Effect::SetWindowProperty {
+                window: check,
+                atom: atoms.supporting_wm_check,
+                values: vec![check.resource_id()],
+            },
+            Effect::SetAtomList {
+                window: root,
+                atom: atoms.supported,
+                values: supported_atoms
+                    .iter()
+                    .map(xcb::Xid::resource_id)
+                    .collect::<Vec<_>>(),
+            },
+            Effect::SetCardinal32 {
+                window: root,
+                atom: atoms.number_of_desktops,
+                value: NUM_WORKSPACES as u32,
+            },
+            Effect::SetCardinal32 {
+                window: root,
+                atom: atoms.current_desktop,
+                value: 0,
+            },
+        ]
     }
 
-    fn update_current_desktop(&self) {
-        Atoms::set_cardinal32(
-            &self.conn,
-            self.root_window(),
-            self.atoms.current_desktop,
-            &[self.workspace as u32],
-        );
+    fn update_current_desktop_effect(&self) -> Effect {
+        Effect::SetCardinal32 {
+            window: self.x11.root(),
+            atom: self.x11.atoms().current_desktop,
+            value: self.current_workspace as u32,
+        }
     }
 
-    fn set_window_desktop(&self, window: Window, workspace: u32) {
-        Atoms::set_cardinal32(&self.conn, window, self.atoms.wm_desktop, &[workspace]);
+    fn set_window_desktop_effect(&self, window: Window, current_workspace: u32) -> Effect {
+        Effect::SetCardinal32 {
+            window,
+            atom: self.x11.atoms().wm_desktop,
+            value: current_workspace,
+        }
     }
 
     fn get_window_desktop(&self, window: Window) -> Option<u32> {
-        Atoms::get_cardinal32(&self.conn, window, self.atoms.wm_desktop)
+        self.x11.get_cardinal32(window, self.x11.atoms().wm_desktop)
     }
 
     fn get_current_desktop(&self) -> Option<u32> {
-        Atoms::get_cardinal32(&self.conn, self.root_window(), self.atoms.current_desktop)
+        self.x11
+            .get_cardinal32(self.x11.root(), self.x11.atoms().current_desktop)
     }
 
     /*
@@ -299,19 +302,15 @@ impl WindowManager {
 
     */
 
-    const fn root_window(&self) -> Window {
-        self.root_window
-    }
-
     fn current_workspace_mut(&mut self) -> &mut Workspace {
         self.workspaces
-            .get_mut(self.workspace)
+            .get_mut(self.current_workspace)
             .expect("Workspace should never be out of bounds")
     }
 
     fn current_workspace(&self) -> &Workspace {
         self.workspaces
-            .get(self.workspace)
+            .get(self.current_workspace)
             .expect("Workspace should never be out of bounds")
     }
 
@@ -324,14 +323,7 @@ impl WindowManager {
     }
 
     fn get_root_window_children(&self) -> Result<Vec<Window>, xcb::Error> {
-        let cookie = self.conn.send_request(&x::QueryTree {
-            window: self.root_window(),
-        });
-
-        let reply = self.conn.wait_for_reply(cookie)?;
-        let children: Vec<Window> = reply.children().to_vec();
-
-        Ok(children)
+        self.x11.get_root_window_children()
     }
 
     /*
@@ -346,171 +338,86 @@ impl WindowManager {
 
     */
 
-    fn configure_window(
-        &self,
-        window: Window,
-        x: i32,
-        y: i32,
-        width: u32,
-        height: u32,
-    ) -> VoidCookieChecked {
-        let config_values = [
-            x::ConfigWindow::X(x),
-            x::ConfigWindow::Y(y),
-            x::ConfigWindow::Width(width),
-            x::ConfigWindow::Height(height),
-            x::ConfigWindow::BorderWidth(self.border_width),
-        ];
-
-        self.conn.send_request_checked(&x::ConfigureWindow {
-            window,
-            value_list: &config_values,
-        })
-    }
-
-    fn configure_windows(&self, workspace_id: usize) {
-        if let Some(workspace) = self.get_workspace(workspace_id) {
-            let clients: Vec<_> = workspace
+    fn configure_windows(&self, workspace_id: usize) -> Vec<Effect> {
+        let mut effects: Vec<Effect> = vec![];
+        if let Some(current_workspace) = self.get_workspace(workspace_id) {
+            let clients: Vec<_> = current_workspace
                 .iter_clients()
                 .filter(|client| client.is_mapped())
                 .collect();
             if clients.is_empty() {
                 debug!("No windows to configure");
-                return;
+                return effects;
             }
 
-            let total_size: u32 = clients.iter().map(|client| client.size()).sum();
-            let border_width = self.border_width + self.window_gap;
-            let inner_h = (self.screen_height_usable - 2 * border_width).max(1);
-            let screen_partitions = self.screen_width / total_size;
+            let weights: Vec<u32> = clients.iter().map(|client| client.size()).collect();
+            let area = Rect {
+                x: 0,
+                y: 0,
+                w: self.screen.width,
+                h: self.usable_screen_height(),
+            };
+            let layout =
+                self.layout
+                    .generate_layout(area, &weights, self.border_width, self.window_gap);
 
-            let mut cumulative = 0u32;
-            let config_cookies: Vec<_> = clients
+            effects = clients
                 .iter()
-                .map(|twin| {
-                    let cell = (self.screen_width * twin.size()) / total_size;
-                    let inner_w = (cell - 2 * border_width).max(1);
-                    let x = (cumulative * screen_partitions + self.window_gap) as i32;
-                    cumulative += twin.size();
-                    self.configure_window(
-                        twin.window(),
-                        x,
-                        self.window_gap as i32,
-                        inner_w,
-                        inner_h,
-                    )
+                .zip(layout)
+                .map(|(client, rect)| Effect::Configure {
+                    window: client.window(),
+                    x: rect.x,
+                    y: rect.y,
+                    w: rect.w,
+                    h: rect.h,
+                    border: self.border_width,
                 })
                 .collect();
-
-            for cookie in config_cookies.into_iter() {
-                if let Err(e) = self.conn.check_request(cookie) {
-                    warn!("Failed to configure window: {e:?}");
-                }
-            }
         }
+
+        effects
     }
 
-    fn configure_dock_windows(&self) {
-        let dock_y = (self.screen_height as i32) - (self.dock_height as i32);
+    fn configure_dock_windows(&self) -> Vec<Effect> {
+        let mut effects = Vec::with_capacity(self.dock_windows.len());
+        let dock_y = (self.screen.height as i32) - (self.dock_height as i32);
 
-        for window in &self.dock_windows {
-            let config_values = [
-                x::ConfigWindow::X(0),
-                x::ConfigWindow::Y(dock_y),
-                x::ConfigWindow::Width(self.screen_width),
-                x::ConfigWindow::Height(self.dock_height),
-            ];
-
-            let _ = self.conn.send_and_check_request(&x::ConfigureWindow {
-                window: *window,
-                value_list: &config_values,
+        for &window in &self.dock_windows {
+            effects.push(Effect::ConfigurePositionSize {
+                window,
+                x: 0,
+                y: dock_y,
+                w: self.screen.width,
+                h: self.dock_height,
             });
         }
+
+        effects
     }
 
-    fn set_focus(&mut self, idx: usize) {
-        // Reset border on old focused window (if any)
+    fn set_focus(&mut self, idx: usize) -> Vec<Effect> {
+        let mut effects = Vec::new();
+
         if let Some(old_window) = self.current_workspace().get_focused_window() {
-            self.unfocus_window(old_window);
-            debug!("Reset border on old focused window");
+            effects.push(Effect::SetBorder {
+                window: old_window,
+                pixel: self.screen.normal_border_pixel,
+                width: self.border_width,
+            });
         }
 
         self.current_workspace_mut().set_focus(idx);
 
-        // Set border on window to be focused (if present)
         if let Some(new_focus_window) = self.current_workspace().get_focused_window() {
-            self.focus_window(new_focus_window);
-            let _ = self.conn.send_and_check_request(&x::SetInputFocus {
-                revert_to: x::InputFocus::PointerRoot,
-                focus: new_focus_window,
-                time: 0,
+            effects.push(Effect::SetBorder {
+                window: new_focus_window,
+                pixel: self.screen.focused_border_pixel,
+                width: self.border_width,
             });
+            effects.push(Effect::Focus(new_focus_window));
         }
-    }
 
-    fn focus_window(&self, window: Window) {
-        self.set_window_border(window, self.focused_border_pixel, self.border_width);
-    }
-
-    fn unfocus_window(&self, window: Window) {
-        self.set_window_border(window, self.normal_border_pixel, self.border_width);
-    }
-
-    fn set_window_border(&self, window: Window, pixel: u32, width: u32) {
-        let _ = self
-            .conn
-            .send_and_check_request(&x::ChangeWindowAttributes {
-                window,
-                value_list: &[x::Cw::BorderPixel(pixel)],
-            });
-
-        let _ = self.conn.send_and_check_request(&x::ConfigureWindow {
-            window,
-            value_list: &[x::ConfigWindow::BorderWidth(width)],
-        });
-    }
-
-    fn supports_wm_delete(&self, window: Window) -> Result<bool, xcb::Error> {
-        let cookie = self.conn.send_request(&x::GetProperty {
-            delete: false,
-            window,
-            property: self.atoms.wm_protocols,
-            r#type: x::ATOM_ATOM,
-            long_offset: 0,
-            long_length: 1024, // plenty for protocol list
-        });
-
-        let reply = self.conn.wait_for_reply(cookie)?;
-
-        // In xcb, for type ATOM, the value is raw bytes of 32-bit atom ids.
-        // reply.value::<x::Atom>() gives a typed slice.
-        let atoms_list: &[x::Atom] = reply.value();
-        Ok(atoms_list.contains(&self.atoms.wm_delete_window))
-    }
-
-    fn send_wm_delete(&self, window: x::Window) -> Result<(), xcb::Error> {
-        // X11 ClientMessage data is 5x 32-bit.
-        // Per ICCCM: data[0] = WM_DELETE_WINDOW atom, data[1] = timestamp.
-        let ev = x::ClientMessageEvent::new(
-            window,
-            self.atoms.wm_protocols,
-            x::ClientMessageData::Data32([
-                self.atoms.wm_delete_window.resource_id(),
-                x::CURRENT_TIME,
-                0,
-                0,
-                0,
-            ]),
-        );
-
-        self.conn.send_and_check_request(&x::SendEvent {
-            propagate: false,
-            destination: x::SendEventDest::Window(window),
-            event_mask: x::EventMask::NO_EVENT,
-            event: &ev,
-        })?;
-
-        Ok(())
+        effects
     }
 
     /*
@@ -544,32 +451,20 @@ impl WindowManager {
         }
     }
 
-    fn kill_client(&mut self) {
+    fn kill_client(&mut self) -> Vec<Effect> {
         if let Some(window) = self.current_workspace_mut().removed_focused_window() {
             info!("Killing client window: {window:?}");
 
-            match self.supports_wm_delete(window) {
-                Ok(true) => {
-                    info!("Sending WM_DELETE_WINDOW message to window: {window:?}");
-                    if let Err(e) = self.send_wm_delete(window) {
-                        error!("Failed to send window delete for {window:?}: {e:?}. Falling back to force kill");
-                        self.force_kill_client(window);
-                    }
-                }
-                _ => {
-                    error!("Window {window:?} does not support WM_DELETE_WINDOW or failed to query WM_PROTOCOLS. Falling back to force kill.");
-                    self.force_kill_client(window);
+            match self.x11.supports_wm_delete(window) {
+                Ok(true) => vec![Effect::SendWmDelete(window)],
+                Ok(false) => vec![Effect::KillClient(window)],
+                Err(e) => {
+                    error!("Failed to query WM_PROTOCOLS for {window:?}: {e:?}. Falling back to force kill.");
+                    vec![Effect::KillClient(window)]
                 }
             }
-        }
-    }
-
-    fn force_kill_client(&self, window: Window) {
-        match self.conn.send_and_check_request(&x::KillClient {
-            resource: window.resource_id(),
-        }) {
-            Ok(()) => info!("Successfully killed window: {window:?}"),
-            Err(e) => error!("Failed to kill window {window:?}: {e:?}"),
+        } else {
+            vec![]
         }
     }
 
@@ -586,124 +481,129 @@ impl WindowManager {
         Some(((curr + direction).rem_euclid(window_count)) as usize)
     }
 
-    fn shift_focus(&mut self, direction: isize) {
+    fn shift_focus(&mut self, direction: isize) -> Vec<Effect> {
         if let Some(next_focus) = self.next_window_index(direction) {
             debug!("Focus shifted to window index: {next_focus}");
-            self.set_focus(next_focus);
+            return self.set_focus(next_focus);
         }
+
+        vec![]
     }
 
-    fn swap_window(&mut self, direction: isize) {
+    fn swap_window(&mut self, direction: isize) -> Vec<Effect> {
+        let mut effects: Vec<Effect> = vec![];
         if let Some(next_window) = self.next_window_index(direction) {
             let curr_workspace = self.current_workspace_mut();
             match curr_workspace.get_focus() {
                 Some(focus) => {
                     curr_workspace.swap_windows(focus, next_window);
-                    self.set_focus(next_window);
-                    self.configure_windows(self.workspace);
+                    effects.extend(self.set_focus(next_window));
+                    effects.extend(self.configure_windows(self.current_workspace));
                 }
                 None => error!(
-                    "Failed to get focus for current workspace {}",
-                    self.workspace
+                    "Failed to get focus for current current_workspace {}",
+                    self.current_workspace
                 ),
             }
         }
+
+        effects
     }
 
-    fn increase_window_weight(&mut self, increment: u32) {
+    fn increase_window_weight(&mut self, increment: u32) -> Vec<Effect> {
+        let mut effects: Vec<Effect> = vec![];
         if let Some(focused_win) = self.current_workspace_mut().get_focused_client_mut() {
             focused_win.increase_window_size(increment);
-            self.configure_windows(self.workspace);
+            effects = self.configure_windows(self.current_workspace);
         }
+
+        effects
     }
 
-    fn decrease_window_weight(&mut self, increment: u32) {
+    fn decrease_window_weight(&mut self, increment: u32) -> Vec<Effect> {
+        let mut effects: Vec<Effect> = vec![];
         if let Some(focused_win) = self.current_workspace_mut().get_focused_client_mut() {
             focused_win.decrease_window_size(increment);
-            self.configure_windows(self.workspace);
+            effects = self.configure_windows(self.current_workspace);
         }
+        effects
     }
 
-    fn increase_window_gap(&mut self, increment: u32) {
+    fn increase_window_gap(&mut self, increment: u32) -> Vec<Effect> {
         self.window_gap += increment;
-        self.configure_windows(self.workspace);
+        self.configure_windows(self.current_workspace)
     }
 
-    fn decrease_window_gap(&mut self, decrement: u32) {
+    fn decrease_window_gap(&mut self, decrement: u32) -> Vec<Effect> {
+        let mut effects: Vec<Effect> = vec![];
         let new_gap = self.window_gap.saturating_sub(decrement);
         if new_gap != self.window_gap {
             self.window_gap = new_gap;
-            self.configure_windows(self.workspace);
+            effects = self.configure_windows(self.current_workspace);
         }
+        effects
     }
 
-    fn go_to_workspace(&mut self, new_workspace_id: usize) {
-        if self.workspace == new_workspace_id || new_workspace_id >= NUM_WORKSPACES {
-            return;
+    fn go_to_workspace(&mut self, new_workspace_id: usize) -> Vec<Effect> {
+        let mut effects: Vec<Effect> = vec![];
+
+        if self.current_workspace == new_workspace_id || new_workspace_id >= NUM_WORKSPACES {
+            return effects;
         }
+
         debug!(
-            "Switching from workspace {} to {new_workspace_id}",
-            self.workspace
+            "Switching from current_workspace {} to {new_workspace_id}",
+            self.current_workspace
         );
-        let old_wspace_cookies: Vec<_> = self
-            .current_workspace()
-            .iter_windows()
-            .map(|win| {
-                self.conn
-                    .send_request_checked(&x::UnmapWindow { window: *win })
-            })
-            .collect();
-
-        self.workspace = new_workspace_id;
-        self.configure_windows(self.workspace);
-        let new_wspace_cookies: Vec<_> = self
-            .current_workspace()
-            .iter_windows()
-            .map(|win| {
-                self.conn
-                    .send_request_checked(&x::MapWindow { window: *win })
-            })
-            .collect();
-
-        for cookie in new_wspace_cookies {
-            {
-                let _ = self.conn.check_request(cookie);
-            }
+        for win in self.current_workspace().iter_windows() {
+            effects.push(Effect::Unmap(*win));
         }
-        for cookie in old_wspace_cookies {
-            {
-                let _ = self.conn.check_request(cookie);
-            }
+
+        self.current_workspace = new_workspace_id;
+
+        for win in self.current_workspace().iter_windows() {
+            effects.push(Effect::Map(*win));
         }
-        self.update_current_desktop();
+
+        effects.extend(self.configure_windows(self.current_workspace));
+        effects.push(self.update_current_desktop_effect());
         if let Some(focus) = self.current_workspace().get_focus() {
-            self.set_focus(focus);
+            effects.extend(self.set_focus(focus));
         }
-        if let Some(workspace_id) = self.get_current_desktop() {
-            debug!("Current desktop is set to {workspace_id}");
-        }
+
+        effects
     }
 
-    fn send_to_workspace(&mut self, workspace_id: usize) {
+    fn send_to_workspace(&mut self, workspace_id: usize) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        if workspace_id >= NUM_WORKSPACES {
+            return effects;
+        }
+
         match self.current_workspace_mut().removed_focused_window() {
             Some(window_to_send) => {
                 if let Some(new_workspace) = self.workspaces.get_mut(workspace_id) {
                     new_workspace.push_window(window_to_send);
-                    let _ = self.conn.send_and_check_request(&x::UnmapWindow {
+                    effects.push(Effect::Unmap(window_to_send));
+                    effects.push(Effect::SetBorder {
                         window: window_to_send,
+                        pixel: self.screen.normal_border_pixel,
+                        width: self.border_width,
                     });
-                    self.unfocus_window(window_to_send);
-                    self.configure_windows(self.workspace);
-                    self.configure_windows(workspace_id);
-                    self.shift_focus(0);
-                    self.set_window_desktop(window_to_send, workspace_id as u32);
+                    effects.extend(self.configure_windows(self.current_workspace));
+                    effects.extend(self.configure_windows(workspace_id));
+                    effects.extend(self.shift_focus(0));
+                    effects
+                        .push(self.set_window_desktop_effect(window_to_send, workspace_id as u32));
                 }
             }
             None => error!(
-                "Failed to remove focused window from workspace {}",
-                self.workspace
+                "Failed to remove focused window from current_workspace {}",
+                self.current_workspace
             ),
         }
+
+        effects
     }
 
     /*
@@ -718,13 +618,16 @@ impl WindowManager {
 
     */
 
-    fn handle_key_press(&mut self, ev: &x::KeyPressEvent) {
+    fn handle_key_press(&mut self, ev: &x::KeyPressEvent) -> Vec<Effect> {
         let keycode = ev.detail();
         let modifiers = ModMask::from_bits_truncate(ev.state().bits());
 
         if let Some(action) = self.key_bindings.get(&(keycode, modifiers)) {
             match action {
-                ActionEvent::Spawn(cmd) => self.spawn_client(cmd),
+                ActionEvent::Spawn(cmd) => {
+                    self.spawn_client(cmd);
+                    vec![]
+                }
                 ActionEvent::Kill => self.kill_client(),
                 ActionEvent::NextWindow => self.shift_focus(1),
                 ActionEvent::PrevWindow => self.shift_focus(-1),
@@ -733,35 +636,30 @@ impl WindowManager {
                 ActionEvent::SwapRight => self.swap_window(1),
                 ActionEvent::SwapLeft => self.swap_window(-1),
                 ActionEvent::IncreaseWindowWeight(increment) => {
-                    self.increase_window_weight(*increment);
+                    self.increase_window_weight(*increment)
                 }
                 ActionEvent::DecreaseWindowWeight(increment) => {
-                    self.decrease_window_weight(*increment);
+                    self.decrease_window_weight(*increment)
                 }
                 ActionEvent::IncreaseWindowGap(increment) => self.increase_window_gap(*increment),
                 ActionEvent::DecreaseWindowGap(increment) => self.decrease_window_gap(*increment),
             }
         } else {
             error!("No binding found for keycode: {keycode} with modifiers: {modifiers:?}",);
+            vec![]
         }
     }
 
-    fn handle_map_request(&mut self, window: Window) {
+    fn handle_map_request(&mut self, window: Window) -> Vec<Effect> {
+        let mut effects = Vec::new();
         // Check if this is a dock window
-        if self.is_dock_window(window) {
+        if self.x11.is_dock_window(window) {
             debug!("Mapping dock window: {window:?}");
             self.dock_windows.push(window);
-            match self.conn.send_and_check_request(&x::MapWindow { window }) {
-                Ok(()) => {
-                    info!("Successfully mapped dock window: {window:?}");
-                    self.configure_dock_windows();
-                }
-                Err(e) => {
-                    error!("Failed to map dock window {window:?}: {e:?}");
-                }
-            }
+            effects.push(Effect::Map(window));
+            effects.extend(self.configure_dock_windows());
         } else {
-            // Regular window - add to current workspace
+            // Regular window - add to current current_workspace
             match self
                 .current_workspace_mut()
                 .get_client_mut(&window.resource_id())
@@ -773,23 +671,19 @@ impl WindowManager {
                     self.current_workspace_mut().push_window(window);
                 }
             }
-            match self.conn.send_and_check_request(&x::MapWindow { window }) {
-                Ok(()) => (),
-                Err(e) => {
-                    error!("Failed to map window {window:?}: {e:?}");
-                }
-            }
+
+            effects.push(Effect::Map(window));
             let idx = self.current_workspace().num_of_windows().saturating_sub(1);
-            self.set_focus(idx);
-            self.configure_windows(self.workspace);
-            self.set_window_desktop(window, self.workspace as u32);
-            if let Some(desktop) = self.get_window_desktop(window) {
-                debug!("Desktop is set to {desktop} for {window:?}")
-            }
+            effects.extend(self.set_focus(idx));
+            effects.extend(self.configure_windows(self.current_workspace));
+            effects.push(self.set_window_desktop_effect(window, self.current_workspace as u32));
         }
+
+        effects
     }
 
-    fn handle_destroy_event(&mut self, window: Window) {
+    fn handle_destroy_event(&mut self, window: Window) -> Vec<Effect> {
+        let mut effects = Vec::new();
         // Check if it's a dock window
         let window_id = window.resource_id();
         let was_dock = self
@@ -800,32 +694,37 @@ impl WindowManager {
         if was_dock {
             debug!("Dock window destroyed: {window:?}");
             self.dock_windows.retain(|w| w.resource_id() != window_id);
-            return;
+            return effects;
         }
 
-        for i in 0..10 {
-            if let Some(workspace) = self.workspaces.get_mut(i) {
-                if workspace.remove_client(&window_id).is_some() {
+        for i in 0..NUM_WORKSPACES {
+            if let Some(current_workspace) = self.workspaces.get_mut(i) {
+                if current_workspace.remove_client(&window_id).is_some() {
                     break;
                 }
             }
         }
 
-        self.shift_focus(0);
-        self.configure_windows(self.workspace);
+        effects.extend(self.shift_focus(0));
+        effects.extend(self.configure_windows(self.current_workspace));
+
+        effects
     }
 
-    fn handle_unmap_event(&mut self, window: Window) {
+    fn handle_unmap_event(&mut self, window: Window) -> Vec<Effect> {
+        let mut effects = Vec::new();
         if let Some(client) = self
             .current_workspace_mut()
             .get_client_mut(&window.resource_id())
         {
             if client.is_mapped() {
                 client.set_mapped(false);
-                self.shift_focus(-1);
-                self.configure_windows(self.workspace);
+                effects.extend(self.shift_focus(-1));
+                effects.extend(self.configure_windows(self.current_workspace));
             }
         }
+
+        effects
     }
 
     /*
@@ -854,14 +753,16 @@ impl WindowManager {
         }
     }
 
-    fn grab_windows(&mut self) {
+    fn grab_windows(&mut self) -> Vec<Effect> {
         match self.get_root_window_children() {
             Ok(children) => {
                 children.iter().for_each(|window| {
                     if let Some(workspace_id) = self.get_window_desktop(*window) {
-                        if let Some(workspace) = self.get_workspace_mut(workspace_id as usize) {
+                        if let Some(current_workspace) =
+                            self.get_workspace_mut(workspace_id as usize)
+                        {
                             debug!("Assigning {window:?} to desktop {workspace_id}");
-                            workspace.push_window(*window);
+                            current_workspace.push_window(*window);
                         };
                     }
                 });
@@ -872,34 +773,41 @@ impl WindowManager {
 
         if let Some(workspace_id) = self.get_current_desktop() {
             debug!("Desktop upon restart is {workspace_id}");
-            self.workspace = (workspace_id as usize + 1) % NUM_WORKSPACES;
-            self.go_to_workspace(workspace_id as usize);
+            self.current_workspace = (workspace_id as usize + 1) % NUM_WORKSPACES;
+            return self.go_to_workspace(workspace_id as usize);
         }
+
+        vec![]
     }
 
     pub fn run(&mut self) -> xcb::Result<()> {
         Self::spawn_autostart();
-        self.grab_windows();
+        let startup_fx = self.grab_windows();
+        self.apply_effects(startup_fx);
         loop {
-            match self.conn.wait_for_event()? {
+            match self.x11.wait_for_event()? {
                 xcb::Event::X(x::Event::KeyPress(ev)) => {
                     debug!("Received KeyPress event: {ev:?}");
-                    self.handle_key_press(&ev);
+                    let fx = self.handle_key_press(&ev);
+                    self.apply_effects(fx);
                 }
 
                 xcb::Event::X(x::Event::MapRequest(ev)) => {
                     debug!("Received MapRequest event for {:?}", ev.window());
-                    self.handle_map_request(ev.window());
+                    let fx = self.handle_map_request(ev.window());
+                    self.apply_effects(fx);
                 }
 
                 xcb::Event::X(x::Event::DestroyNotify(ev)) => {
                     debug!("Received DestroyNotify event for  {:?}", ev.window());
-                    self.handle_destroy_event(ev.window());
+                    let fx = self.handle_destroy_event(ev.window());
+                    self.apply_effects(fx);
                 }
 
                 xcb::Event::X(x::Event::UnmapNotify(ev)) => {
                     debug!("Received UnmapNotify event for {:?}", ev.window());
-                    self.handle_unmap_event(ev.window());
+                    let fx = self.handle_unmap_event(ev.window());
+                    self.apply_effects(fx);
                 }
 
                 xcb::Event::X(x::Event::MapNotify(ev)) => {
