@@ -1,7 +1,8 @@
 use crate::{atoms::Atoms, rdwm::Effect};
+use log::error;
 use xcb::{
     x::{self, EventMask, Window},
-    Connection, ProtocolError, Xid,
+    Connection, ProtocolError, VoidCookieChecked, Xid,
 };
 
 pub struct X11 {
@@ -37,22 +38,51 @@ impl X11 {
         self.conn.wait_for_event()
     }
 
-    pub fn apply(&self, fx: Effect) -> xcb::Result<()> {
-        match fx {
-            Effect::Map(w) => {
-                self.conn
-                    .send_and_check_request(&x::MapWindow { window: w })?;
+    pub fn apply_effects_unchecked(&self, effects: &[Effect]) {
+        for effect in effects {
+            self.send_effect_unchecked(effect);
+        }
+
+        if let Err(e) = self.flush() {
+            error!("Failed to flush X connection: {e:?}");
+        }
+    }
+
+    pub fn apply_effects_checked(&self, effects: &[Effect]) {
+        let mut pending_checks: Vec<(VoidCookieChecked, String)> = Vec::new();
+
+        for effect in effects {
+            let effect_dbg = format!("{effect:?}");
+            for cookie in self.send_effect_checked(effect) {
+                pending_checks.push((cookie, effect_dbg.clone()));
             }
-            Effect::Unmap(w) => {
-                self.conn
-                    .send_and_check_request(&x::UnmapWindow { window: w })?;
+        }
+
+        if let Err(e) = self.flush() {
+            error!("Failed to flush X connection: {e:?}");
+        }
+
+        for (cookie, effect_dbg) in pending_checks {
+            if let Err(e) = self.check_cookie(cookie) {
+                error!("X error applying {effect_dbg}: {e:?}");
             }
-            Effect::Focus(w) => {
-                self.conn.send_and_check_request(&x::SetInputFocus {
+        }
+    }
+
+    pub fn send_effect_unchecked(&self, effect: &Effect) {
+        match effect {
+            Effect::Map(window) => {
+                self.conn.send_request(&x::MapWindow { window: *window });
+            }
+            Effect::Unmap(window) => {
+                self.conn.send_request(&x::UnmapWindow { window: *window });
+            }
+            Effect::Focus(window) => {
+                self.conn.send_request(&x::SetInputFocus {
                     revert_to: x::InputFocus::PointerRoot,
-                    focus: w,
+                    focus: *window,
                     time: x::CURRENT_TIME,
-                })?;
+                });
             }
             Effect::Configure {
                 window,
@@ -62,65 +92,91 @@ impl X11 {
                 h,
                 border,
             } => {
-                self.configure_window(window, x, y, w, h, border)?;
+                let config_values = [
+                    x::ConfigWindow::X(*x),
+                    x::ConfigWindow::Y(*y),
+                    x::ConfigWindow::Width(*w),
+                    x::ConfigWindow::Height(*h),
+                    x::ConfigWindow::BorderWidth(*border),
+                ];
+                self.conn.send_request(&x::ConfigureWindow {
+                    window: *window,
+                    value_list: &config_values,
+                });
             }
             Effect::ConfigurePositionSize { window, x, y, w, h } => {
                 let config_values = [
-                    x::ConfigWindow::X(x),
-                    x::ConfigWindow::Y(y),
-                    x::ConfigWindow::Width(w),
-                    x::ConfigWindow::Height(h),
+                    x::ConfigWindow::X(*x),
+                    x::ConfigWindow::Y(*y),
+                    x::ConfigWindow::Width(*w),
+                    x::ConfigWindow::Height(*h),
                 ];
-                self.conn.send_and_check_request(&x::ConfigureWindow {
-                    window,
+                self.conn.send_request(&x::ConfigureWindow {
+                    window: *window,
                     value_list: &config_values,
-                })?;
+                });
             }
             Effect::SetBorder {
                 window,
                 pixel,
                 width,
             } => {
-                self.conn
-                    .send_and_check_request(&x::ChangeWindowAttributes {
-                        window,
-                        value_list: &[x::Cw::BorderPixel(pixel)],
-                    })?;
-
-                self.conn.send_and_check_request(&x::ConfigureWindow {
-                    window,
-                    value_list: &[x::ConfigWindow::BorderWidth(width)],
-                })?;
+                self.conn.send_request(&x::ChangeWindowAttributes {
+                    window: *window,
+                    value_list: &[x::Cw::BorderPixel(*pixel)],
+                });
+                self.conn.send_request(&x::ConfigureWindow {
+                    window: *window,
+                    value_list: &[x::ConfigWindow::BorderWidth(*width)],
+                });
             }
             Effect::SetCardinal32 {
                 window,
                 atom,
                 value,
             } => {
-                Atoms::set_cardinal32(&self.conn, window, atom, &[value]);
+                self.conn.send_request(&x::ChangeProperty {
+                    mode: x::PropMode::Replace,
+                    window: *window,
+                    property: *atom,
+                    r#type: x::ATOM_CARDINAL,
+                    data: &[*value],
+                });
             }
             Effect::SetAtomList {
                 window,
                 atom,
                 values,
             } => {
-                Atoms::set_atom(&self.conn, window, atom, &values);
+                self.conn.send_request(&x::ChangeProperty {
+                    mode: x::PropMode::Replace,
+                    window: *window,
+                    property: *atom,
+                    r#type: x::ATOM_ATOM,
+                    data: values,
+                });
             }
             Effect::SetWindowProperty {
                 window,
                 atom,
                 values,
             } => {
-                Atoms::set_window_property(&self.conn, window, atom, &values);
+                self.conn.send_request(&x::ChangeProperty {
+                    mode: x::PropMode::Replace,
+                    window: *window,
+                    property: *atom,
+                    r#type: x::ATOM_WINDOW,
+                    data: values,
+                });
             }
             Effect::KillClient(window) => {
-                self.conn.send_and_check_request(&x::KillClient {
+                self.conn.send_request(&x::KillClient {
                     resource: window.resource_id(),
-                })?;
+                });
             }
             Effect::SendWmDelete(window) => {
                 let ev = x::ClientMessageEvent::new(
-                    window,
+                    *window,
                     self.atoms.wm_protocols,
                     x::ClientMessageData::Data32([
                         self.atoms.wm_delete_window.resource_id(),
@@ -130,30 +186,154 @@ impl X11 {
                         0,
                     ]),
                 );
-
-                self.conn.send_and_check_request(&x::SendEvent {
+                self.conn.send_request(&x::SendEvent {
                     propagate: false,
-                    destination: x::SendEventDest::Window(window),
+                    destination: x::SendEventDest::Window(*window),
                     event_mask: x::EventMask::NO_EVENT,
                     event: &ev,
-                })?;
+                });
             }
             Effect::GrabKey {
                 keycode,
                 modifiers,
                 grab_window,
             } => {
-                self.conn.send_and_check_request(&x::GrabKey {
+                self.conn.send_request(&x::GrabKey {
                     owner_events: false,
-                    grab_window,
-                    modifiers,
-                    key: keycode,
+                    grab_window: *grab_window,
+                    modifiers: *modifiers,
+                    key: *keycode,
                     pointer_mode: x::GrabMode::Async,
                     keyboard_mode: x::GrabMode::Async,
-                })?;
+                });
             }
         }
-        Ok(())
+    }
+
+    pub fn send_effect_checked(&self, effect: &Effect) -> Vec<VoidCookieChecked> {
+        match effect {
+            Effect::Map(window) => vec![self
+                .conn
+                .send_request_checked(&x::MapWindow { window: *window })],
+            Effect::Unmap(window) => vec![self
+                .conn
+                .send_request_checked(&x::UnmapWindow { window: *window })],
+            Effect::Focus(window) => vec![self.conn.send_request_checked(&x::SetInputFocus {
+                revert_to: x::InputFocus::PointerRoot,
+                focus: *window,
+                time: x::CURRENT_TIME,
+            })],
+            Effect::Configure {
+                window,
+                x,
+                y,
+                w,
+                h,
+                border,
+            } => vec![self.configure_window_checked(*window, *x, *y, *w, *h, *border)],
+            Effect::ConfigurePositionSize { window, x, y, w, h } => {
+                let config_values = [
+                    x::ConfigWindow::X(*x),
+                    x::ConfigWindow::Y(*y),
+                    x::ConfigWindow::Width(*w),
+                    x::ConfigWindow::Height(*h),
+                ];
+                vec![self.conn.send_request_checked(&x::ConfigureWindow {
+                    window: *window,
+                    value_list: &config_values,
+                })]
+            }
+            Effect::SetBorder {
+                window,
+                pixel,
+                width,
+            } => {
+                let a = self.conn.send_request_checked(&x::ChangeWindowAttributes {
+                    window: *window,
+                    value_list: &[x::Cw::BorderPixel(*pixel)],
+                });
+                let b = self.conn.send_request_checked(&x::ConfigureWindow {
+                    window: *window,
+                    value_list: &[x::ConfigWindow::BorderWidth(*width)],
+                });
+                vec![a, b]
+            }
+            Effect::SetCardinal32 {
+                window,
+                atom,
+                value,
+            } => vec![self.conn.send_request_checked(&x::ChangeProperty {
+                mode: x::PropMode::Replace,
+                window: *window,
+                property: *atom,
+                r#type: x::ATOM_CARDINAL,
+                data: &[*value],
+            })],
+            Effect::SetAtomList {
+                window,
+                atom,
+                values,
+            } => vec![self.conn.send_request_checked(&x::ChangeProperty {
+                mode: x::PropMode::Replace,
+                window: *window,
+                property: *atom,
+                r#type: x::ATOM_ATOM,
+                data: values,
+            })],
+            Effect::SetWindowProperty {
+                window,
+                atom,
+                values,
+            } => vec![self.conn.send_request_checked(&x::ChangeProperty {
+                mode: x::PropMode::Replace,
+                window: *window,
+                property: *atom,
+                r#type: x::ATOM_WINDOW,
+                data: values,
+            })],
+            Effect::KillClient(window) => vec![self.conn.send_request_checked(&x::KillClient {
+                resource: window.resource_id(),
+            })],
+            Effect::SendWmDelete(window) => {
+                let ev = x::ClientMessageEvent::new(
+                    *window,
+                    self.atoms.wm_protocols,
+                    x::ClientMessageData::Data32([
+                        self.atoms.wm_delete_window.resource_id(),
+                        x::CURRENT_TIME,
+                        0,
+                        0,
+                        0,
+                    ]),
+                );
+                vec![self.conn.send_request_checked(&x::SendEvent {
+                    propagate: false,
+                    destination: x::SendEventDest::Window(*window),
+                    event_mask: x::EventMask::NO_EVENT,
+                    event: &ev,
+                })]
+            }
+            Effect::GrabKey {
+                keycode,
+                modifiers,
+                grab_window,
+            } => vec![self.conn.send_request_checked(&x::GrabKey {
+                owner_events: false,
+                grab_window: *grab_window,
+                modifiers: *modifiers,
+                key: *keycode,
+                pointer_mode: x::GrabMode::Async,
+                keyboard_mode: x::GrabMode::Async,
+            })],
+        }
+    }
+
+    pub fn flush(&self) -> xcb::Result<()> {
+        self.conn.flush().map_err(Into::into)
+    }
+
+    pub fn check_cookie(&self, cookie: VoidCookieChecked) -> xcb::Result<()> {
+        self.conn.check_request(cookie).map_err(Into::into)
     }
 
     pub fn set_root_event_mask(&self) -> Result<(), ProtocolError> {
@@ -214,7 +394,7 @@ impl X11 {
         Atoms::get_cardinal32(&self.conn, window, prop)
     }
 
-    fn configure_window(
+    fn configure_window_checked(
         &self,
         window: Window,
         x: i32,
@@ -222,7 +402,7 @@ impl X11 {
         width: u32,
         height: u32,
         border: u32,
-    ) -> xcb::Result<()> {
+    ) -> VoidCookieChecked {
         let config_values = [
             x::ConfigWindow::X(x),
             x::ConfigWindow::Y(y),
@@ -231,11 +411,9 @@ impl X11 {
             x::ConfigWindow::BorderWidth(border),
         ];
 
-        self.conn.send_and_check_request(&x::ConfigureWindow {
+        self.conn.send_request_checked(&x::ConfigureWindow {
             window,
             value_list: &config_values,
-        })?;
-
-        Ok(())
+        })
     }
 }

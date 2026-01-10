@@ -117,10 +117,12 @@ impl<T: Layout> WindowManager<T> {
         info!("Successfully set substructure redirect");
 
         // Set up key grabs
-        wm.apply_effects(wm.keygrab_effects());
+        let keygrab_effects = wm.keygrab_effects();
+        wm.x11.apply_effects_checked(&keygrab_effects);
 
         // Set up EWMH hints
-        wm.apply_effects(wm.publish_ewmh_hints());
+        let ewmh_effects = wm.publish_ewmh_hints();
+        wm.x11.apply_effects_unchecked(&ewmh_effects);
 
         Ok(wm)
     }
@@ -130,14 +132,6 @@ impl<T: Layout> WindowManager<T> {
             return self.screen.height.saturating_sub(self.dock_height);
         }
         self.screen.height
-    }
-
-    fn apply_effects(&self, effects: Vec<Effect>) {
-        for fx in effects {
-            if let Err(e) = self.x11.apply(fx) {
-                error!("Failed to apply effect: {e:?}");
-            }
-        }
     }
 
     fn keygrab_effects(&self) -> Vec<Effect> {
@@ -777,32 +771,41 @@ impl<T: Layout> WindowManager<T> {
 
     pub fn run(&mut self) -> xcb::Result<()> {
         Self::spawn_autostart();
-        let startup_fx = self.grab_windows();
-        self.apply_effects(startup_fx);
+        let startup_effects = self.grab_windows();
+        self.x11.apply_effects_unchecked(&startup_effects);
         loop {
-            match self.x11.wait_for_event()? {
+            let event = match self.x11.wait_for_event() {
+                Ok(ev) => ev,
+                Err(xcb::Error::Protocol(e)) => {
+                    error!("X11 protocol error: {e:?}");
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
+
+            match event {
                 xcb::Event::X(x::Event::KeyPress(ev)) => {
                     debug!("Received KeyPress event: {ev:?}");
-                    let fx = self.handle_key_press(&ev);
-                    self.apply_effects(fx);
+                    let effects = self.handle_key_press(&ev);
+                    self.x11.apply_effects_unchecked(&effects);
                 }
 
                 xcb::Event::X(x::Event::MapRequest(ev)) => {
                     debug!("Received MapRequest event for {:?}", ev.window());
-                    let fx = self.handle_map_request(ev.window());
-                    self.apply_effects(fx);
+                    let effects = self.handle_map_request(ev.window());
+                    self.x11.apply_effects_unchecked(&effects);
                 }
 
                 xcb::Event::X(x::Event::DestroyNotify(ev)) => {
                     debug!("Received DestroyNotify event for  {:?}", ev.window());
-                    let fx = self.handle_destroy_event(ev.window());
-                    self.apply_effects(fx);
+                    let effects = self.handle_destroy_event(ev.window());
+                    self.x11.apply_effects_unchecked(&effects);
                 }
 
                 xcb::Event::X(x::Event::UnmapNotify(ev)) => {
                     debug!("Received UnmapNotify event for {:?}", ev.window());
-                    let fx = self.handle_unmap_event(ev.window());
-                    self.apply_effects(fx);
+                    let effects = self.handle_unmap_event(ev.window());
+                    self.x11.apply_effects_unchecked(&effects);
                 }
 
                 xcb::Event::X(x::Event::MapNotify(ev)) => {

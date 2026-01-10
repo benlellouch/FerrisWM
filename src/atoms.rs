@@ -51,6 +51,7 @@ impl Atoms {
             .atom()
     }
 
+    #[allow(dead_code)]
     pub fn set_window_property(
         conn: &Connection,
         window: x::Window,
@@ -66,6 +67,7 @@ impl Atoms {
         });
     }
 
+    #[allow(dead_code)]
     pub fn set_atom(conn: &Connection, root: x::Window, prop: x::Atom, values: &[u32]) {
         if let Err(e) = conn.send_and_check_request(&x::ChangeProperty {
             mode: x::PropMode::Replace,
@@ -78,6 +80,7 @@ impl Atoms {
         }
     }
 
+    #[allow(dead_code)]
     pub fn set_cardinal32(conn: &Connection, window: x::Window, prop: x::Atom, values: &[u32]) {
         if let Err(e) = conn.send_and_check_request(&x::ChangeProperty {
             mode: x::PropMode::Replace,
