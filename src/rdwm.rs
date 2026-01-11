@@ -883,13 +883,12 @@ impl<T: Layout> WindowManager<T> {
         };
 
         let mut changed = false;
-        if let Some(workspace) = self.workspaces.get_mut(workspace_id) {
-            if let Some(client) = workspace.get_client_mut(&window.resource_id())
-                && client.is_mapped()
-            {
-                client.set_mapped(false);
-                changed = true;
-            }
+        if let Some(workspace) = self.workspaces.get_mut(workspace_id)
+            && let Some(client) = workspace.get_client_mut(&window.resource_id())
+            && client.is_mapped()
+        {
+            client.set_mapped(false);
+            changed = true;
         }
 
         // If the window is not in the current workspace, avoid perturbing focus/layout.
