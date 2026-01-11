@@ -2,8 +2,8 @@ use log::{debug, error, info};
 use std::process::Command;
 use std::{collections::HashMap, process::Stdio};
 use xcb::{
-    x::{self, ModMask, Window},
     Connection, Xid,
+    x::{self, ModMask, Window},
 };
 
 use crate::atoms::Atoms;
@@ -28,6 +28,7 @@ pub struct ScreenConfig {
 pub struct WindowManager<T: Layout> {
     x11: X11,
     workspaces: [Workspace; NUM_WORKSPACES],
+    window_to_workspace: HashMap<Window, usize>,
     current_workspace: usize,
     key_bindings: HashMap<(u8, ModMask), ActionEvent>,
     screen: ScreenConfig,
@@ -45,7 +46,7 @@ impl<T: Layout> WindowManager<T> {
 
         let key_bindings = Self::setup_key_bindings(&conn);
         let (screen, root_window) = Self::setup_root(&conn);
-        let atoms = Atoms::initialize(&conn);
+        let atoms = Atoms::intern_all(&conn).expect("Failed to intern Atoms");
 
         // Create WM check window
         let wm_check_window = Self::create_wm_check_window(&conn, root_window);
@@ -55,6 +56,7 @@ impl<T: Layout> WindowManager<T> {
         let wm = Self {
             x11,
             workspaces: Default::default(),
+            window_to_workspace: Default::default(),
             current_workspace: 0,
             key_bindings,
             screen,
@@ -80,25 +82,6 @@ impl<T: Layout> WindowManager<T> {
         Ok(wm)
     }
 
-    fn usable_screen_height(&self) -> u32 {
-        if !self.dock_windows.is_empty() {
-            return self.screen.height.saturating_sub(self.dock_height);
-        }
-        self.screen.height
-    }
-
-    fn keygrab_effects(&self) -> Vec<Effect> {
-        let mut effects = Vec::with_capacity(self.key_bindings.len());
-        for &(keycode, modifiers) in self.key_bindings.keys() {
-            effects.push(Effect::GrabKey {
-                keycode,
-                modifiers,
-                grab_window: self.x11.root(),
-            });
-        }
-        effects
-    }
-
     /*
 
     ▗▄ ▗▖▗▄▄▄▖▄   ▄     ▗▖ ▗▖▗▄▄▄▖▗▖   ▗▄▄▖ ▗▄▄▄▖▗▄▄▖  ▗▄▖
@@ -114,6 +97,18 @@ impl<T: Layout> WindowManager<T> {
     fn setup_key_bindings(conn: &Connection) -> HashMap<(u8, ModMask), ActionEvent> {
         let (keysyms, keysyms_per_keycode) = fetch_keyboard_mapping(conn);
         populate_key_bindings(conn, &keysyms, keysyms_per_keycode)
+    }
+
+    fn keygrab_effects(&self) -> Vec<Effect> {
+        let mut effects = Vec::with_capacity(self.key_bindings.len());
+        for &(keycode, modifiers) in self.key_bindings.keys() {
+            effects.push(Effect::GrabKey {
+                keycode,
+                modifiers,
+                grab_window: self.x11.root(),
+            });
+        }
+        effects
     }
 
     fn setup_root(conn: &Connection) -> (ScreenConfig, Window) {
@@ -199,6 +194,13 @@ impl<T: Layout> WindowManager<T> {
 
     fn get_root_window_children(&self) -> Result<Vec<Window>, xcb::Error> {
         self.x11.get_root_window_children()
+    }
+
+    fn usable_screen_height(&self) -> u32 {
+        if !self.dock_windows.is_empty() {
+            return self.screen.height.saturating_sub(self.dock_height);
+        }
+        self.screen.height
     }
 
     /*
@@ -334,7 +336,9 @@ impl<T: Layout> WindowManager<T> {
                 Ok(true) => vec![Effect::SendWmDelete(window)],
                 Ok(false) => vec![Effect::KillClient(window)],
                 Err(e) => {
-                    error!("Failed to query WM_PROTOCOLS for {window:?}: {e:?}. Falling back to force kill.");
+                    error!(
+                        "Failed to query WM_PROTOCOLS for {window:?}: {e:?}. Falling back to force kill."
+                    );
                     vec![Effect::KillClient(window)]
                 }
             }
@@ -357,31 +361,34 @@ impl<T: Layout> WindowManager<T> {
     }
 
     fn shift_focus(&mut self, direction: isize) -> Vec<Effect> {
-        if let Some(next_focus) = self.next_window_index(direction) {
-            debug!("Focus shifted to window index: {next_focus}");
-            return self.set_focus(next_focus);
-        }
+        let Some(next_focus) = self.next_window_index(direction) else {
+            return vec![];
+        };
 
-        vec![]
+        debug!("Focus shifted to window index: {next_focus}");
+        self.set_focus(next_focus)
     }
 
     fn swap_window(&mut self, direction: isize) -> Vec<Effect> {
-        let mut effects: Vec<Effect> = vec![];
-        if let Some(next_window) = self.next_window_index(direction) {
+        let Some(next_window) = self.next_window_index(direction) else {
+            return vec![];
+        };
+
+        let Some(focus) = self.current_workspace().get_focus() else {
+            error!(
+                "Failed to get focus for current current_workspace {}",
+                self.current_workspace
+            );
+            return vec![];
+        };
+
+        {
             let curr_workspace = self.current_workspace_mut();
-            match curr_workspace.get_focus() {
-                Some(focus) => {
-                    curr_workspace.swap_windows(focus, next_window);
-                    effects.extend(self.set_focus(next_window));
-                    effects.extend(self.configure_windows(self.current_workspace));
-                }
-                None => error!(
-                    "Failed to get focus for current current_workspace {}",
-                    self.current_workspace
-                ),
-            }
+            curr_workspace.swap_windows(focus, next_window);
         }
 
+        let mut effects = self.set_focus(next_window);
+        effects.extend(self.configure_windows(self.current_workspace));
         effects
     }
 
@@ -410,13 +417,14 @@ impl<T: Layout> WindowManager<T> {
     }
 
     fn decrease_window_gap(&mut self, decrement: u32) -> Vec<Effect> {
-        let mut effects: Vec<Effect> = vec![];
         let new_gap = self.window_gap.saturating_sub(decrement);
-        if new_gap != self.window_gap {
-            self.window_gap = new_gap;
-            effects = self.configure_windows(self.current_workspace);
+
+        if new_gap == self.window_gap {
+            return vec![];
         }
-        effects
+
+        self.window_gap = new_gap;
+        self.configure_windows(self.current_workspace)
     }
 
     fn go_to_workspace(&mut self, new_workspace_id: usize) -> Vec<Effect> {
@@ -546,6 +554,8 @@ impl<T: Layout> WindowManager<T> {
                 }
                 None => {
                     self.current_workspace_mut().push_window(window);
+                    self.window_to_workspace
+                        .insert(window, self.current_workspace);
                 }
             }
 
@@ -563,7 +573,6 @@ impl<T: Layout> WindowManager<T> {
     }
 
     fn handle_destroy_event(&mut self, window: Window) -> Vec<Effect> {
-        let mut effects = Vec::new();
         // Check if it's a dock window
         let window_id = window.resource_id();
         let was_dock = self
@@ -574,36 +583,39 @@ impl<T: Layout> WindowManager<T> {
         if was_dock {
             debug!("Dock window destroyed: {window:?}");
             self.dock_windows.retain(|w| w.resource_id() != window_id);
-            return effects;
+            return vec![];
         }
 
-        for i in 0..NUM_WORKSPACES {
-            if let Some(current_workspace) = self.workspaces.get_mut(i) {
-                if current_workspace.remove_client(&window_id).is_some() {
-                    break;
-                }
-            }
+        if let Some(workspace_id) = self.window_to_workspace.get(&window)
+            && let Some(current_workspace) = self.workspaces.get_mut(*workspace_id)
+        {
+            current_workspace.remove_client(&window_id);
         }
 
-        effects.extend(self.shift_focus(0));
+        let mut effects = self.shift_focus(0);
         effects.extend(self.configure_windows(self.current_workspace));
-
         effects
     }
 
     fn handle_unmap_event(&mut self, window: Window) -> Vec<Effect> {
-        let mut effects = Vec::new();
-        if let Some(client) = self
-            .current_workspace_mut()
-            .get_client_mut(&window.resource_id())
+        let mut changed = false;
         {
-            if client.is_mapped() {
+            if let Some(client) = self
+                .current_workspace_mut()
+                .get_client_mut(&window.resource_id())
+                && client.is_mapped()
+            {
                 client.set_mapped(false);
-                effects.extend(self.shift_focus(-1));
-                effects.extend(self.configure_windows(self.current_workspace));
+                changed = true;
             }
         }
 
+        if !changed {
+            return vec![];
+        }
+
+        let mut effects = self.shift_focus(-1);
+        effects.extend(self.configure_windows(self.current_workspace));
         effects
     }
 
@@ -637,14 +649,13 @@ impl<T: Layout> WindowManager<T> {
         match self.get_root_window_children() {
             Ok(children) => {
                 children.iter().for_each(|window| {
-                    if let Some(workspace_id) = self.ewmh().get_window_desktop(*window) {
-                        if let Some(current_workspace) =
+                    if let Some(workspace_id) = self.ewmh().get_window_desktop(*window)
+                        && let Some(current_workspace) =
                             self.get_workspace_mut(workspace_id as usize)
-                        {
-                            debug!("Assigning {window:?} to desktop {workspace_id}");
-                            current_workspace.push_window(*window);
-                        };
-                    }
+                    {
+                        debug!("Assigning {window:?} to desktop {workspace_id}");
+                        current_workspace.push_window(*window);
+                    };
                 });
             }
 

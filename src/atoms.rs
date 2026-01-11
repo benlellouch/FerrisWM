@@ -1,50 +1,16 @@
-use xcb::x;
-use xcb::Connection;
+use xcb::atoms_struct;
 
-pub struct Atoms {
-    pub number_of_desktops: x::Atom,
-    pub current_desktop: x::Atom,
-    pub supported: x::Atom,
-    pub supporting_wm_check: x::Atom,
-    pub wm_window_type: x::Atom,
-    pub wm_window_type_dock: x::Atom,
-    pub wm_protocols: x::Atom,
-    pub wm_delete_window: x::Atom,
-    pub wm_desktop: x::Atom,
-}
-
-impl Atoms {
-    pub fn initialize(conn: &Connection) -> Self {
-        let number_of_desktops = Self::intern_atom(conn, "_NET_NUMBER_OF_DESKTOPS");
-        let current_desktop = Self::intern_atom(conn, "_NET_CURRENT_DESKTOP");
-        let supported = Self::intern_atom(conn, "_NET_SUPPORTED");
-        let supporting_wm_check = Self::intern_atom(conn, "_NET_SUPPORTING_WM_CHECK");
-        let wm_window_type = Self::intern_atom(conn, "_NET_WM_WINDOW_TYPE");
-        let wm_window_type_dock = Self::intern_atom(conn, "_NET_WM_WINDOW_TYPE_DOCK");
-        let wm_protocols = Self::intern_atom(conn, "WM_PROTOCOLS");
-        let wm_delete_window = Self::intern_atom(conn, "WM_DELETE_WINDOW");
-        let wm_desktop = Self::intern_atom(conn, "_NET_WM_DESKTOP");
-
-        Self {
-            number_of_desktops,
-            current_desktop,
-            supported,
-            supporting_wm_check,
-            wm_window_type,
-            wm_window_type_dock,
-            wm_protocols,
-            wm_delete_window,
-            wm_desktop,
-        }
-    }
-
-    pub fn intern_atom(conn: &Connection, name: &str) -> x::Atom {
-        let cookie = conn.send_request(&x::InternAtom {
-            only_if_exists: false,
-            name: name.as_bytes(),
-        });
-        conn.wait_for_reply(cookie)
-            .expect("If Interning Atom fails we don't want to start the WM")
-            .atom()
+atoms_struct! {
+    #[derive(Copy, Clone, Debug)]
+    pub struct Atoms {
+        pub number_of_desktops => b"_NET_NUMBER_OF_DESKTOPS" only_if_exists = false,
+        pub current_desktop => b"_NET_CURRENT_DESKTOP" only_if_exists = false,
+        pub supported => b"_NET_SUPPORTED" only_if_exists = false,
+        pub supporting_wm_check => b"_NET_SUPPORTING_WM_CHECK" only_if_exists = false,
+        pub wm_window_type => b"_NET_WM_WINDOW_TYPE" only_if_exists = false,
+        pub wm_window_type_dock => b"_NET_WM_WINDOW_TYPE_DOCK" only_if_exists = false,
+        pub wm_protocols => b"WM_PROTOCOLS" only_if_exists = false,
+        pub wm_delete_window => b"WM_DELETE_WINDOW" only_if_exists = false,
+        pub wm_desktop => b"_NET_WM_DESKTOP" only_if_exists = false,
     }
 }

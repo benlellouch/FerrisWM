@@ -1,7 +1,7 @@
 use log::{info, warn};
 use std::collections::HashMap;
-use xcb::x::{self, ModMask};
 use xcb::Connection;
+use xcb::x::{self, ModMask};
 
 use crate::config::ACTION_MAPPINGS;
 use crate::key_mapping::ActionEvent;

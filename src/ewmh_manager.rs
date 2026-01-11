@@ -1,4 +1,4 @@
-use xcb::{x, Xid};
+use xcb::{Xid, x};
 
 use crate::{config::NUM_WORKSPACES, effect::Effect, x11::X11};
 
@@ -23,6 +23,7 @@ impl<'a> EwmhManager<'a> {
             atoms.current_desktop,
             atoms.wm_window_type,
             atoms.wm_window_type_dock,
+            atoms.wm_desktop,
         ];
 
         vec![

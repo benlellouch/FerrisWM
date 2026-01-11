@@ -1,8 +1,8 @@
 use crate::{atoms::Atoms, effect::Effect};
 use log::error;
 use xcb::{
-    x::{self, EventMask, Window},
     Connection, ProtocolError, VoidCookieChecked, Xid,
+    x::{self, EventMask, Window},
 };
 
 pub struct X11 {

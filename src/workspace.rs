@@ -1,5 +1,5 @@
 use indexmap::IndexMap;
-use xcb::{x::Window, Xid};
+use xcb::{Xid, x::Window};
 
 #[derive(Debug)]
 pub struct Client {
