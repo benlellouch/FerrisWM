@@ -9,6 +9,7 @@ mod key_mapping;
 mod keyboard;
 mod layout;
 mod rdwm;
+mod wm_state;
 mod workspace;
 mod x11;
 

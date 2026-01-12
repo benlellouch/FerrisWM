@@ -2,21 +2,27 @@ use xcb::{Xid, x};
 
 use std::process;
 
-use crate::{config::NUM_WORKSPACES, effect::Effect, x11::X11};
+use crate::{atoms::Atoms, config::NUM_WORKSPACES, effect::Effect, x11::X11};
 
-pub struct EwmhManager<'a> {
-    x11: &'a X11,
+pub struct EwmhManager {
+    atoms: Atoms,
+    root: x::Window,
+    wm_check_window: x::Window,
 }
 
-impl<'a> EwmhManager<'a> {
-    pub const fn new(x11: &'a X11) -> Self {
-        Self { x11 }
+impl EwmhManager {
+    pub fn new(x11: &X11) -> Self {
+        Self {
+            atoms: *x11.atoms(),
+            root: x11.root(),
+            wm_check_window: x11.wm_check_window(),
+        }
     }
 
     pub fn publish_hints(&self) -> Vec<Effect> {
-        let atoms = self.x11.atoms();
-        let root = self.x11.root();
-        let check = self.x11.wm_check_window();
+        let atoms = &self.atoms;
+        let root = self.root;
+        let check = self.wm_check_window;
 
         let supported_atoms = [
             atoms.supported,
@@ -124,8 +130,8 @@ impl<'a> EwmhManager<'a> {
 
     pub fn desktop_geometry_effect(&self, width: u32, height: u32) -> Effect {
         Effect::SetCardinal32List {
-            window: self.x11.root(),
-            atom: self.x11.atoms().desktop_geometry,
+            window: self.root,
+            atom: self.atoms.desktop_geometry,
             values: vec![width, height],
         }
     }
@@ -137,16 +143,16 @@ impl<'a> EwmhManager<'a> {
         }
 
         Effect::SetCardinal32List {
-            window: self.x11.root(),
-            atom: self.x11.atoms().workarea,
+            window: self.root,
+            atom: self.atoms.workarea,
             values,
         }
     }
 
     pub fn active_window_effect(&self, window: Option<x::Window>) -> Effect {
         Effect::SetWindowProperty {
-            window: self.x11.root(),
-            atom: self.x11.atoms().active_window,
+            window: self.root,
+            atom: self.atoms.active_window,
             values: window.map(|w| vec![w.resource_id()]).unwrap_or_default(),
         }
     }
@@ -158,13 +164,13 @@ impl<'a> EwmhManager<'a> {
             .collect::<Vec<_>>();
         vec![
             Effect::SetWindowProperty {
-                window: self.x11.root(),
-                atom: self.x11.atoms().client_list,
+                window: self.root,
+                atom: self.atoms.client_list,
                 values: values.clone(),
             },
             Effect::SetWindowProperty {
-                window: self.x11.root(),
-                atom: self.x11.atoms().client_list_stacking,
+                window: self.root,
+                atom: self.atoms.client_list_stacking,
                 values,
             },
         ]
@@ -172,8 +178,8 @@ impl<'a> EwmhManager<'a> {
 
     pub fn current_desktop_effect(&self, current_workspace: usize) -> Effect {
         Effect::SetCardinal32 {
-            window: self.x11.root(),
-            atom: self.x11.atoms().current_desktop,
+            window: self.root,
+            atom: self.atoms.current_desktop,
             value: current_workspace as u32,
         }
     }
@@ -181,22 +187,21 @@ impl<'a> EwmhManager<'a> {
     pub fn window_desktop_effect(&self, window: x::Window, workspace: u32) -> Effect {
         Effect::SetCardinal32 {
             window,
-            atom: self.x11.atoms().wm_desktop,
+            atom: self.atoms.wm_desktop,
             value: workspace,
         }
     }
 
-    pub fn get_window_desktop(&self, window: x::Window) -> Option<u32> {
-        self.x11.get_cardinal32(window, self.x11.atoms().wm_desktop)
+    pub fn get_window_desktop(&self, x11: &X11, window: x::Window) -> Option<u32> {
+        x11.get_cardinal32(window, self.atoms.wm_desktop)
     }
 
-    pub fn get_current_desktop(&self) -> Option<u32> {
-        self.x11
-            .get_cardinal32(self.x11.root(), self.x11.atoms().current_desktop)
+    pub fn get_current_desktop(&self, x11: &X11) -> Option<u32> {
+        x11.get_cardinal32(self.root, self.atoms.current_desktop)
     }
 
     pub fn window_fullscreen_state_effect(&self, window: x::Window, fullscreen: bool) -> Effect {
-        let atoms = self.x11.atoms();
+        let atoms = &self.atoms;
         Effect::SetAtomList {
             window,
             atom: atoms.wm_state,
