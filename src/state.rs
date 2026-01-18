@@ -443,7 +443,7 @@ impl State {
 
         current_workspace.swap_windows(&focus, &next_window);
 
-        let mut effects = self.set_focus(next_window);
+        let mut effects = vec![];
         effects.extend(self.configure_windows(self.current_workspace));
         effects
     }
@@ -556,7 +556,7 @@ impl State {
             && let Some(client) = workspace.get_client_mut(&window)
             && client.is_mapped()
         {
-            client.set_mapped(false);
+            workspace.set_client_mapped(&window, false);
             changed = true;
         }
 
