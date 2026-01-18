@@ -363,31 +363,26 @@ impl State {
             return effects;
         }
 
-        match self.current_workspace_mut().removed_focused_window() {
-            Some(window_to_send) => {
-                if let Some(new_workspace) = self.workspaces.get_mut(workspace_id) {
-                    new_workspace.push_window(window_to_send);
-                    new_workspace.set_client_mapped(&window_to_send, false);
-                    self.window_to_workspace
-                        .insert(window_to_send, workspace_id);
+        if let Some(window_to_send) = self.current_workspace_mut().removed_focused_window()
+            && let Some(new_workspace) = self.workspaces.get_mut(workspace_id)
+        {
+            new_workspace.push_window(window_to_send);
+            new_workspace.set_client_mapped(&window_to_send, false);
+            self.window_to_workspace
+                .insert(window_to_send, workspace_id);
 
-                    effects.push(Effect::Unmap(window_to_send));
-                    effects.push(Effect::SetBorder {
-                        window: window_to_send,
-                        pixel: self.screen.normal_border_pixel,
-                        width: self.border_width,
-                    });
+            effects.push(Effect::Unmap(window_to_send));
+            effects.push(Effect::SetBorder {
+                window: window_to_send,
+                pixel: self.screen.normal_border_pixel,
+                width: self.border_width,
+            });
 
-                    effects.extend(self.configure_windows(self.current_workspace));
-                    effects.extend(self.configure_windows(workspace_id));
+            effects.extend(self.configure_windows(self.current_workspace));
+            effects.extend(self.configure_windows(workspace_id));
 
-                    if let Some(focus) = self.current_workspace().get_focus_window() {
-                        effects.extend(self.set_focus(focus));
-                    }
-                }
-            }
-            None => {
-                // No focused window.
+            if let Some(focus) = self.current_workspace().get_focus_window() {
+                effects.extend(self.set_focus(focus));
             }
         }
 
