@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use log::warn;
 use xcb::{Xid, x::Window};
 
 use crate::{
@@ -428,6 +429,7 @@ impl State {
 
     pub fn shift_focus(&mut self, direction: isize) -> Vec<Effect> {
         let Some(next_focus) = self.current_workspace().next_window(direction) else {
+            warn!("Failed to retrieve next focus");
             return vec![];
         };
 

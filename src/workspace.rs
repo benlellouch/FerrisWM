@@ -132,7 +132,7 @@ impl Workspace {
             self.fullscreen = None;
         }
 
-        if self.clients.is_empty() || self.iter_clients().all(|client| !client.is_mapped()) {
+        if self.clients.is_empty() {
             self.focus = None;
             return;
         }
@@ -156,7 +156,7 @@ impl Workspace {
 
     fn is_focus_valid(&self) -> bool {
         self.focus
-            .map(|win| self.clients.contains_key(&win) && self.is_window_mapped(&win))
+            .map(|win| self.clients.contains_key(&win))
             .unwrap_or(true)
     }
 
