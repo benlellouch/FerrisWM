@@ -74,11 +74,13 @@ impl State {
     }
 
     pub fn is_window_fullscreen(&self, window: Window) -> bool {
-        self.workspaces
-            .iter()
-            .any(|ws| ws.get_fullscreen_window() == Some(window))
+        self.window_to_workspace
+            .get(&window)
+            .and_then(|workspace_id| self.get_workspace(*workspace_id))
+            .and_then(|workspace| workspace.get_fullscreen_window())
+            .map(|fullscreen| window == fullscreen)
+            .unwrap_or(false)
     }
-
     pub fn managed_windows_sorted(&self) -> Vec<Window> {
         let mut entries = self
             .window_to_workspace
@@ -622,5 +624,54 @@ impl State {
         }
 
         effects
+    }
+}
+
+#[cfg(test)]
+mod state_tests {
+
+    use xcb::XidNew;
+
+    use super::*;
+
+    fn make_state(num_of_clients_per_workspace: u32) -> State {
+        let screen = ScreenConfig {
+            width: 800,
+            height: 600,
+            focused_border_pixel: 0,
+            normal_border_pixel: 1,
+        };
+        let mut state = State::new(screen, 1, 1, 25);
+        for i in 0..(num_of_clients_per_workspace * NUM_WORKSPACES as u32) {
+            let workspace_id: usize = (i as usize) / NUM_WORKSPACES;
+            let window = Window::new(i);
+            state.track_startup_managed(window, workspace_id);
+        }
+
+        state
+    }
+
+    #[test]
+    fn test_set_focus() {
+        let mut state = make_state(10);
+        let window_to_focus = Window::new(6);
+        let effects = state.set_focus(window_to_focus);
+        println!("{effects:?}");
+
+        assert_eq!(
+            state.current_workspace().get_focus_window().unwrap(),
+            window_to_focus
+        );
+        assert!(effects.contains(&Effect::SetBorder {
+            window: Window::new(0),
+            pixel: state.screen.normal_border_pixel,
+            width: state.border_width
+        }));
+        assert!(effects.contains(&Effect::SetBorder {
+            window: window_to_focus,
+            pixel: state.screen.focused_border_pixel,
+            width: state.border_width
+        }));
+        assert!(effects.contains(&Effect::Focus(window_to_focus)));
     }
 }
