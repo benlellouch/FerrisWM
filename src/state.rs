@@ -430,6 +430,9 @@ impl State {
 
     pub fn swap_window(&mut self, direction: isize) -> Vec<Effect> {
         let current_workspace = self.current_workspace_mut();
+        if current_workspace.get_fullscreen_window().is_some() {
+            return vec![];
+        }
         let Some(next_window) = current_workspace.next_mapped_window(direction) else {
             return vec![];
         };
@@ -630,6 +633,35 @@ mod state_tests {
 
     use super::*;
 
+    fn make_state_with_windows(windows: &[(usize, u32, bool)], dock_height: u32) -> State {
+        let screen = ScreenConfig {
+            width: 800,
+            height: 600,
+            focused_border_pixel: 0,
+            normal_border_pixel: 1,
+        };
+
+        let mut state = State::new(screen, 1, 0, dock_height);
+
+        for (workspace_id, window_id, mapped) in windows {
+            let window = Window::new(*window_id);
+            state.track_startup_managed(window, *workspace_id);
+            if !*mapped {
+                let workspace = state.get_workspace_mut(*workspace_id).unwrap();
+                workspace.set_client_mapped(&window, false);
+            }
+        }
+
+        state
+    }
+
+    fn find_configure_height(effects: &[Effect], window: Window) -> Option<u32> {
+        effects.iter().find_map(|effect| match effect {
+            Effect::Configure { window: w, h, .. } if *w == window => Some(*h),
+            _ => None,
+        })
+    }
+
     fn make_state(num_of_clients_per_workspace: u32) -> State {
         let screen = ScreenConfig {
             width: 800,
@@ -770,17 +802,7 @@ mod state_tests {
         assert_eq!(
             workspace_effects
                 .iter()
-                .filter(|effect| matches!(
-                    effect,
-                    Effect::Configure {
-                        window: _,
-                        x: _,
-                        y: _,
-                        w: _,
-                        h: _,
-                        border: _
-                    }
-                ))
+                .filter(|effect| matches!(effect, Effect::Configure { .. }))
                 .collect::<Vec<&Effect>>()
                 .len(),
             9
@@ -800,17 +822,7 @@ mod state_tests {
         assert_eq!(
             workspace_effects
                 .iter()
-                .filter(|effect| matches!(
-                    effect,
-                    Effect::Configure {
-                        window: _,
-                        x: _,
-                        y: _,
-                        w: _,
-                        h: _,
-                        border: _
-                    }
-                ))
+                .filter(|effect| matches!(effect, Effect::Configure { .. }))
                 .collect::<Vec<&Effect>>()
                 .len(),
             10
@@ -831,5 +843,287 @@ mod state_tests {
                 .len(),
             10
         )
+    }
+
+    #[test]
+    fn test_fullscreen_then_map_request_does_not_steal_focus() {
+        let mut state = make_state_with_windows(&[(0, 1, true)], 25);
+        let fullscreen_window = Window::new(1);
+        let _ = state.set_focus(fullscreen_window);
+        let _ = state.toggle_fullscreen();
+
+        let new_window = Window::new(2);
+        let effects = state.on_map_request(new_window, WindowType::Managed);
+
+        assert_eq!(state.focused_window(), Some(fullscreen_window));
+        assert!(state.is_window_fullscreen(fullscreen_window));
+        assert!(effects.contains(&Effect::Map(new_window)));
+        assert!(!effects.contains(&Effect::Focus(new_window)));
+        assert!(state.current_workspace().is_window_mapped(&new_window));
+    }
+
+    #[test]
+    fn test_unmap_current_workspace_window_reconfigures() {
+        let mut state = make_state_with_windows(&[(0, 1, true), (0, 2, true)], 25);
+        let focus_window = Window::new(1);
+        let other_window = Window::new(2);
+
+        let _ = state.set_focus(focus_window);
+        let effects = state.on_unmap(other_window);
+
+        assert_eq!(state.focused_window(), Some(focus_window));
+        assert!(!state.current_workspace().is_window_mapped(&other_window));
+        assert_eq!(
+            effects
+                .iter()
+                .filter(|effect| matches!(effect, Effect::Configure { .. }))
+                .collect::<Vec<&Effect>>()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn test_dock_reduces_configured_height() {
+        let mut state = make_state_with_windows(&[(0, 1, true)], 25);
+        let window = Window::new(1);
+
+        let effects_no_dock = state.configure_windows(0);
+        let height_no_dock = find_configure_height(&effects_no_dock, window).unwrap();
+
+        state.track_startup_dock(Window::new(99));
+        let effects_with_dock = state.configure_windows(0);
+        let height_with_dock = find_configure_height(&effects_with_dock, window).unwrap();
+
+        assert_eq!(height_no_dock, 598);
+        assert_eq!(height_with_dock, 573);
+        assert!(height_with_dock < height_no_dock);
+    }
+
+    #[test]
+    fn test_managed_windows_sorted_by_workspace_then_id() {
+        let state = make_state_with_windows(&[(1, 3, false), (0, 2, true), (0, 1, true)], 25);
+        // Ensure all are tracked
+        assert_eq!(state.window_workspace(Window::new(1)), Some(0));
+        assert_eq!(state.window_workspace(Window::new(2)), Some(0));
+        assert_eq!(state.window_workspace(Window::new(3)), Some(1));
+
+        let sorted = state.managed_windows_sorted();
+        assert_eq!(sorted, vec![Window::new(1), Window::new(2), Window::new(3)]);
+    }
+
+    #[test]
+    fn test_client_list_includes_docks_after_managed() {
+        let mut state = make_state_with_windows(&[(0, 5, true), (0, 2, true)], 25);
+        state.track_startup_dock(Window::new(20));
+        state.track_startup_dock(Window::new(10));
+
+        let list = state.client_list_windows();
+        assert_eq!(
+            list,
+            vec![
+                Window::new(2),
+                Window::new(5),
+                Window::new(10),
+                Window::new(20)
+            ]
+        );
+    }
+
+    #[test]
+    fn test_focus_window_uses_desktop_hint_when_untracked() {
+        let mut state = make_state_with_windows(&[(0, 1, true), (1, 11, true)], 25);
+        let effects = state.focus_window(Window::new(11), Some(1));
+
+        assert_eq!(state.current_workspace_id(), 1);
+        assert_eq!(state.focused_window(), Some(Window::new(11)));
+        assert!(effects.iter().any(|e| matches!(e, Effect::Map(_))));
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::Configure { .. }))
+        );
+    }
+
+    #[test]
+    fn test_go_to_workspace_invalid_or_same_is_noop() {
+        let mut state = make_state_with_windows(&[(0, 1, true)], 25);
+        let effects_same = state.go_to_workspace(0);
+        let effects_invalid = state.go_to_workspace(NUM_WORKSPACES + 1);
+
+        assert!(effects_same.is_empty());
+        assert!(effects_invalid.is_empty());
+        assert_eq!(state.current_workspace_id(), 0);
+    }
+
+    #[test]
+    fn test_send_to_workspace_invalid_or_same_is_noop() {
+        let mut state = make_state_with_windows(&[(0, 1, true)], 25);
+        let effects_same = state.send_to_workspace(0);
+        let effects_invalid = state.send_to_workspace(NUM_WORKSPACES + 1);
+
+        assert!(effects_same.is_empty());
+        assert!(effects_invalid.is_empty());
+        assert_eq!(state.window_workspace(Window::new(1)), Some(0));
+    }
+
+    #[test]
+    fn test_increase_decrease_window_gap_reconfigures() {
+        let mut state = make_state_with_windows(&[(0, 1, true), (0, 2, true)], 25);
+
+        let effects_increase = state.increase_window_gap(1);
+        assert_eq!(
+            effects_increase
+                .iter()
+                .filter(|effect| matches!(effect, Effect::Configure { .. }))
+                .count(),
+            2
+        );
+
+        let effects_decrease = state.decrease_window_gap(1);
+        assert_eq!(
+            effects_decrease
+                .iter()
+                .filter(|effect| matches!(effect, Effect::Configure { .. }))
+                .count(),
+            2
+        );
+
+        let effects_noop = state.decrease_window_gap(1000);
+        assert!(effects_noop.is_empty());
+    }
+
+    #[test]
+    fn test_increase_decrease_window_weight_reconfigures() {
+        let mut state = make_state_with_windows(&[(0, 1, true), (0, 2, true)], 25);
+        let _ = state.set_focus(Window::new(1));
+
+        let effects_inc = state.increase_window_weight(2);
+        assert_eq!(
+            effects_inc
+                .iter()
+                .filter(|effect| matches!(effect, Effect::Configure { .. }))
+                .count(),
+            2
+        );
+
+        let effects_dec = state.decrease_window_weight(1);
+        assert_eq!(
+            effects_dec
+                .iter()
+                .filter(|effect| matches!(effect, Effect::Configure { .. }))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn test_map_request_unmanaged_is_simple_map() {
+        let mut state = make_state_with_windows(&[(0, 1, true)], 25);
+        let effects = state.on_map_request(Window::new(99), WindowType::Unmanaged);
+
+        assert_eq!(effects, vec![Effect::Map(Window::new(99))]);
+        assert!(state.window_workspace(Window::new(99)).is_none());
+    }
+
+    #[test]
+    fn test_dock_map_and_destroy_updates_layout() {
+        let mut state = make_state_with_windows(&[(0, 1, true)], 25);
+        let dock = Window::new(50);
+
+        let map_effects = state.on_map_request(dock, WindowType::Dock);
+        assert!(map_effects.contains(&Effect::Map(dock)));
+        assert!(!state.dock_windows.is_empty());
+
+        let destroy_effects = state.on_destroy(dock);
+        assert!(
+            !destroy_effects
+                .iter()
+                .any(|e| matches!(e, Effect::ConfigurePositionSize { .. }))
+        );
+        assert!(state.dock_windows.is_empty());
+    }
+
+    #[test]
+    fn test_on_unmap_ignored_for_dock_and_unmanaged() {
+        let mut state = make_state_with_windows(&[(0, 1, true)], 25);
+        let dock = Window::new(77);
+        state.track_startup_dock(dock);
+
+        let effects_dock = state.on_unmap(dock);
+        let effects_unmanaged = state.on_unmap(Window::new(88));
+
+        assert!(effects_dock.is_empty());
+        assert!(effects_unmanaged.is_empty());
+    }
+
+    #[test]
+    fn test_startup_finalize_switches_workspace_when_hint_provided() {
+        let mut state = make_state_with_windows(&[(0, 1, true), (1, 11, false)], 25);
+        let effects = state.startup_finalize(Some(1));
+
+        assert_eq!(state.current_workspace_id(), 1);
+        assert!(effects.iter().any(|e| matches!(e, Effect::Map(_))));
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::Configure { .. }))
+        );
+    }
+
+    #[test]
+    fn test_shift_focus_wraps_and_skips_unmapped() {
+        let mut state = make_state_with_windows(&[(0, 1, true), (0, 2, false), (0, 3, true)], 25);
+
+        let _ = state.set_focus(Window::new(1));
+        let effects_forward = state.shift_focus(1);
+
+        assert_eq!(state.focused_window(), Some(Window::new(3)));
+        assert!(effects_forward.contains(&Effect::Focus(Window::new(3))));
+
+        let effects_backward = state.shift_focus(-1);
+        assert_eq!(state.focused_window(), Some(Window::new(1)));
+        assert!(effects_backward.contains(&Effect::Focus(Window::new(1))));
+    }
+
+    #[test]
+    fn test_shift_focus_noop_when_only_one_mapped() {
+        let mut state = make_state_with_windows(&[(0, 1, true), (0, 2, false)], 25);
+        let _ = state.set_focus(Window::new(1));
+
+        let effects = state.shift_focus(1);
+
+        assert!(effects.is_empty());
+        assert_eq!(state.focused_window(), Some(Window::new(1)));
+    }
+
+    #[test]
+    fn test_swap_window_swaps_with_next_mapped() {
+        let mut state = make_state_with_windows(&[(0, 1, true), (0, 2, false), (0, 3, true)], 25);
+        let _ = state.set_focus(Window::new(1));
+
+        let effects = state.swap_window(1);
+
+        let order: Vec<Window> = state.current_workspace().iter_windows().copied().collect();
+        assert_eq!(order, vec![Window::new(3), Window::new(2), Window::new(1)]);
+        assert_eq!(
+            effects
+                .iter()
+                .filter(|effect| matches!(effect, Effect::Configure { .. }))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn test_swap_window_noop_when_no_other_mapped() {
+        let mut state = make_state_with_windows(&[(0, 1, true)], 25);
+        let _ = state.set_focus(Window::new(1));
+
+        let effects = state.swap_window(1);
+
+        assert!(effects.is_empty());
+        let order: Vec<Window> = state.current_workspace().iter_windows().copied().collect();
+        assert_eq!(order, vec![Window::new(1)]);
     }
 }
