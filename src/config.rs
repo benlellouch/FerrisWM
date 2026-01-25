@@ -35,7 +35,7 @@ pub static ACTION_MAPPINGS: &[ActionMapping] = &[
     binding!(xkb::Keysym::Return, [MOD], ActionEvent::Spawn("st")),
     binding!(xkb::Keysym::Return, [MOD, SHIFT], ActionEvent::Spawn("x-www-browser")),
     binding!(xkb::Keysym::space, [MOD], ActionEvent::Spawn("rofi -show drun")),
-    binding!(xkb::Keysym::r, [MOD,SHIFT], ActionEvent::Spawn("pkill -x rdwm")), // Reload the WM
+    binding!(xkb::Keysym::r, [MOD,SHIFT], ActionEvent::Spawn("pkill -x FerrisWM")), // Reload the WM
 
     // ==================== MULTIMEDIA BINDINGS ====================
     binding!(xkb::Keysym::XF86_ScrollUp, [], ActionEvent::Spawn("amixer set Master -q 5%+")),

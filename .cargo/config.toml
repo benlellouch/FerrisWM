@@ -1,0 +1,7 @@
+[alias]
+br = "build -r"
+cov-info = "llvm-cov --lcov --output-path ./target/lcov.info"
+cov-show = "llvm-cov --open"
+
+[build]
+rustflags = ["-C", "target-cpu=native"]

@@ -88,12 +88,6 @@ impl LayoutManager {
             .unwrap()
     }
 
-    pub fn set_layout(&mut self, layout: LayoutType) {
-        if self.layout_map.contains_key(&layout) {
-            self.current_layout = layout
-        }
-    }
-
     pub fn cycle_layout(&mut self) {
         if let Some(current_idx) = self.layout_map.get_index_of(&self.current_layout) {
             let next_idx = (current_idx + 1) % self.layout_map.len();

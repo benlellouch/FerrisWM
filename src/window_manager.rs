@@ -11,7 +11,7 @@ use crate::atoms::Atoms;
 use crate::config::{
     DEFAULT_BORDER_WIDTH, DEFAULT_DOCK_HEIGHT, DEFAULT_WINDOW_GAP, NUM_WORKSPACES,
 };
-use crate::effect::Effect;
+use crate::effect::{Effect, Effects};
 use crate::ewmh_manager::EwmhManager;
 use crate::key_mapping::ActionEvent;
 use crate::keyboard::{fetch_keyboard_mapping, populate_key_bindings};
@@ -74,7 +74,7 @@ impl WindowManager {
         Ok(wm)
     }
 
-    fn ewmh_sync_effects(&self) -> Vec<Effect> {
+    fn ewmh_sync_effects(&self) -> Effects {
         let ewmh = &self.ewmh;
         let screen = self.state.screen();
 
@@ -107,7 +107,7 @@ impl WindowManager {
         populate_key_bindings(conn, &keysyms, keysyms_per_keycode)
     }
 
-    fn keygrab_effects(&self) -> Vec<Effect> {
+    fn keygrab_effects(&self) -> Effects {
         let mut effects = Vec::with_capacity(self.key_bindings.len());
         for &(keycode, modifiers) in self.key_bindings.keys() {
             effects.push(Effect::GrabKey {
@@ -171,7 +171,7 @@ impl WindowManager {
     fn spawn_autostart() {
         match Command::new("sh")
             .arg("-c")
-            .arg("exec ~/.config/rdwm/autostart.sh")
+            .arg("exec ~/.config/ferriswm/autostart.sh")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -182,7 +182,7 @@ impl WindowManager {
         }
     }
 
-    fn close_window(&self, window: Window) -> Vec<Effect> {
+    fn close_window(&self, window: Window) -> Effects {
         match self.x11.supports_wm_delete(window) {
             Ok(true) => vec![Effect::SendWmDelete(window)],
             Ok(false) => vec![Effect::KillClient(window)],
@@ -195,7 +195,7 @@ impl WindowManager {
         }
     }
 
-    fn handle_key_press(&mut self, ev: &x::KeyPressEvent) -> Vec<Effect> {
+    fn handle_key_press(&mut self, ev: &x::KeyPressEvent) -> Effects {
         let keycode = ev.detail();
         let modifiers = ModMask::from_bits_truncate(ev.state().bits());
 
@@ -224,7 +224,7 @@ impl WindowManager {
         }
     }
 
-    fn handle_client_message(&mut self, ev: &x::ClientMessageEvent) -> Vec<Effect> {
+    fn handle_client_message(&mut self, ev: &x::ClientMessageEvent) -> Effects {
         let atoms = self.x11.atoms();
         let msg_type = ev.r#type();
 
@@ -258,7 +258,7 @@ impl WindowManager {
         vec![]
     }
 
-    fn grab_windows(&mut self) -> Vec<Effect> {
+    fn grab_windows(&mut self) -> Effects {
         let mut effects = Vec::new();
 
         match self.x11.get_root_window_children() {
@@ -317,6 +317,7 @@ impl WindowManager {
                 xcb::Event::X(x::Event::MapRequest(ev)) => {
                     debug!("Received MapRequest event for {:?}", ev.window());
                     let wt = self.x11.classify_window(ev.window());
+                    debug!("Window type {wt:?} for window {:?}", ev.window());
                     let mut effects = self.state.on_map_request(ev.window(), wt);
                     effects.extend(self.ewmh_sync_effects());
                     self.x11.apply_effects_unchecked(&effects);

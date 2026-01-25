@@ -2,9 +2,9 @@
   <img src="resources/ferris_3.png" width="400" />
 </p>
 
-# <p align="center"> RDWM </p>
+# <p align="center"> FerrisWM </p>
 
-RDWM is a small, minimalist tiling window manager written in Rust using XCB.
+FerrisWM is a small, minimalist tiling window manager written in Rust using XCB.
 
 
 <p align="center">
@@ -21,7 +21,7 @@ RDWM is a small, minimalist tiling window manager written in Rust using XCB.
 - **EWMH / ICCCM:** Publishes _NET_SUPPORTED/_NET_SUPPORTING_WM_CHECK, _NET_NUMBER_OF_DESKTOPS, _NET_CURRENT_DESKTOP and exposes window desktop hints for external bars/panels.
 - **Dock handling:** Detects `_NET_WM_WINDOW_TYPE_DOCK` windows and reserves a dock area (configurable dock height in code).
 - **Graceful close + fallback:** Sends `WM_DELETE_WINDOW` when supported, falls back to `KillClient` if necessary.
-- **Autostart support:** Runs `~/.config/rdwm/autostart.sh` on startup.
+- **Autostart support:** Runs `~/.config/FerrisWM/autostart.sh` on startup.
 - **Hot Reloading** Enabled fast development iterations 
 - **Lightweight implementation:** Built on `xcb` and `xkbcommon`, small dependency surface.
 - **Logging:** Uses `log` + `env_logger` (run with `RUST_LOG=debug` for verbose output).
@@ -41,7 +41,7 @@ cargo build --release
 ```
 
 Running (preview)
-- The repository includes `preview.sh` which builds and then uses `xinit` with `Xephyr` to run `rdwm` in a nested X server for testing.
+- The repository includes `preview.sh` which builds and then uses `xinit` with `Xephyr` to run `FerrisWM` in a nested X server for testing.
 - Example:
 
 ```bash
@@ -51,7 +51,7 @@ Running (preview)
 Notes
 - Configure key bindings and behavior in [src/config.rs](src/config.rs) and [src/key_mapping.rs](src/key_mapping.rs).
 - Logging uses the `log` and `env_logger` crates; run with `RUST_LOG=debug` to see debug output.
-- Recommended testing: use `./preview.sh` (starts rdwm under `Xephyr`) before using as your main WM.
+- Recommended testing: use `./preview.sh` (starts FerrisWM under `Xephyr`) before using as your main WM.
 
 ## TODO
 
@@ -66,7 +66,7 @@ Notes
 - [x] Add EWMH (NETWM) / ICCCM hints for compatibility with panels/status bars
 - [x] Dock window detection and reservation of dock area
 - [x] Graceful WM_DELETE handling with fallback kill
-- [x] Autostart support (`~/.config/rdwm/autostart.sh`)
+- [x] Autostart support (`~/.config/FerrisWM/autostart.sh`)
 - [ ] Create a custom status bar (or integration points) so you can build your own bar displaying workspaces, layout, and window titles
 - [ ] Additional layouts (stacking, master-stack, dynamic layouts)
 - [ ] Improved multi-monitor support and per-monitor workspaces

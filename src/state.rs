@@ -5,7 +5,7 @@ use xcb::{Xid, x::Window};
 
 use crate::{
     config::NUM_WORKSPACES,
-    effect::Effect,
+    effect::{Effect, Effects},
     key_mapping::ActionEvent,
     layout::{LayoutManager, Rect},
     workspace::Workspace,
@@ -138,13 +138,13 @@ impl State {
         WindowType::Unmanaged
     }
 
-    fn cycle_layout(&mut self) -> Vec<Effect> {
+    fn cycle_layout(&mut self) -> Effects {
         self.layout_manager.cycle_layout();
         self.configure_windows(self.current_workspace)
     }
 
-    pub fn configure_windows(&self, workspace_id: usize) -> Vec<Effect> {
-        let mut effects: Vec<Effect> = vec![];
+    pub fn configure_windows(&self, workspace_id: usize) -> Effects {
+        let mut effects: Effects = vec![];
         if let Some(current_workspace) = self.get_workspace(workspace_id) {
             if let Some(fullscreen) = current_workspace.get_fullscreen_window()
                 && current_workspace.is_window_mapped(&fullscreen)
@@ -200,7 +200,7 @@ impl State {
         effects
     }
 
-    pub fn configure_dock_windows(&self) -> Vec<Effect> {
+    pub fn configure_dock_windows(&self) -> Effects {
         let mut effects = Vec::with_capacity(self.dock_windows.len());
         let dock_y = (self.screen.height as i32) - (self.dock_height as i32);
 
@@ -217,7 +217,7 @@ impl State {
         effects
     }
 
-    pub fn set_focus(&mut self, window: Window) -> Vec<Effect> {
+    pub fn set_focus(&mut self, window: Window) -> Effects {
         if let Some(fs) = self.current_workspace().get_fullscreen_window()
             && self.current_workspace().is_window_mapped(&fs)
         {
@@ -258,7 +258,7 @@ impl State {
         effects
     }
 
-    pub fn toggle_fullscreen(&mut self) -> Vec<Effect> {
+    pub fn toggle_fullscreen(&mut self) -> Effects {
         let Some(focused) = self.current_workspace().get_focus_window() else {
             return vec![];
         };
@@ -280,7 +280,7 @@ impl State {
         effects
     }
 
-    pub fn focus_window(&mut self, window: Window, desktop_hint: Option<usize>) -> Vec<Effect> {
+    pub fn focus_window(&mut self, window: Window, desktop_hint: Option<usize>) -> Effects {
         let mut effects = Vec::new();
 
         let workspace_id = self.window_workspace(window).or(desktop_hint);
@@ -302,8 +302,8 @@ impl State {
         effects
     }
 
-    pub fn go_to_workspace(&mut self, new_workspace_id: usize) -> Vec<Effect> {
-        let mut effects: Vec<Effect> = vec![];
+    pub fn go_to_workspace(&mut self, new_workspace_id: usize) -> Effects {
+        let mut effects: Effects = vec![];
 
         if self.current_workspace == new_workspace_id || new_workspace_id >= NUM_WORKSPACES {
             return effects;
@@ -355,7 +355,7 @@ impl State {
         effects
     }
 
-    pub fn send_to_workspace(&mut self, workspace_id: usize) -> Vec<Effect> {
+    pub fn send_to_workspace(&mut self, workspace_id: usize) -> Effects {
         let mut effects = Vec::new();
         if workspace_id >= NUM_WORKSPACES || workspace_id == self.current_workspace_id() {
             return effects;
@@ -386,7 +386,7 @@ impl State {
         effects
     }
 
-    pub fn increase_window_weight(&mut self, increment: u32) -> Vec<Effect> {
+    pub fn increase_window_weight(&mut self, increment: u32) -> Effects {
         if let Some(focused_win) = self.current_workspace_mut().get_focused_client_mut() {
             focused_win.increase_window_size(increment);
             return self.configure_windows(self.current_workspace);
@@ -395,7 +395,7 @@ impl State {
         vec![]
     }
 
-    pub fn decrease_window_weight(&mut self, increment: u32) -> Vec<Effect> {
+    pub fn decrease_window_weight(&mut self, increment: u32) -> Effects {
         if let Some(focused_win) = self.current_workspace_mut().get_focused_client_mut() {
             focused_win.decrease_window_size(increment);
             return self.configure_windows(self.current_workspace);
@@ -403,12 +403,12 @@ impl State {
         vec![]
     }
 
-    pub fn increase_window_gap(&mut self, increment: u32) -> Vec<Effect> {
+    pub fn increase_window_gap(&mut self, increment: u32) -> Effects {
         self.window_gap += increment;
         self.configure_windows(self.current_workspace)
     }
 
-    pub fn decrease_window_gap(&mut self, decrement: u32) -> Vec<Effect> {
+    pub fn decrease_window_gap(&mut self, decrement: u32) -> Effects {
         let new_gap = self.window_gap.saturating_sub(decrement);
 
         if new_gap == self.window_gap {
@@ -419,7 +419,7 @@ impl State {
         self.configure_windows(self.current_workspace)
     }
 
-    pub fn shift_focus(&mut self, direction: isize) -> Vec<Effect> {
+    pub fn shift_focus(&mut self, direction: isize) -> Effects {
         let Some(next_focus) = self.current_workspace().next_mapped_window(direction) else {
             warn!("Failed to retrieve next focus");
             return vec![];
@@ -428,7 +428,7 @@ impl State {
         self.set_focus(next_focus)
     }
 
-    pub fn swap_window(&mut self, direction: isize) -> Vec<Effect> {
+    pub fn swap_window(&mut self, direction: isize) -> Effects {
         let current_workspace = self.current_workspace_mut();
         if current_workspace.get_fullscreen_window().is_some() {
             return vec![];
@@ -448,7 +448,7 @@ impl State {
         effects
     }
 
-    pub fn on_map_request(&mut self, window: Window, window_type: WindowType) -> Vec<Effect> {
+    pub fn on_map_request(&mut self, window: Window, window_type: WindowType) -> Effects {
         match window_type {
             WindowType::Unmanaged => vec![Effect::Map(window)],
             WindowType::Dock => self.handle_map_request_dock(window),
@@ -456,7 +456,7 @@ impl State {
         }
     }
 
-    fn handle_map_request_dock(&mut self, window: Window) -> Vec<Effect> {
+    fn handle_map_request_dock(&mut self, window: Window) -> Effects {
         let mut effects = Vec::new();
 
         if !self
@@ -473,7 +473,7 @@ impl State {
         effects
     }
 
-    fn handle_map_request_managed(&mut self, window: Window) -> Vec<Effect> {
+    fn handle_map_request_managed(&mut self, window: Window) -> Effects {
         let mut effects = Vec::new();
 
         match self.current_workspace_mut().get_client_mut(&window) {
@@ -501,7 +501,7 @@ impl State {
         effects
     }
 
-    pub fn on_destroy(&mut self, window: Window) -> Vec<Effect> {
+    pub fn on_destroy(&mut self, window: Window) -> Effects {
         match self.tracked_window_type(window) {
             WindowType::Dock => self.handle_destroy_event_dock(window),
             WindowType::Managed => self.handle_destroy_event_managed(window),
@@ -509,7 +509,7 @@ impl State {
         }
     }
 
-    fn handle_destroy_event_dock(&mut self, window: Window) -> Vec<Effect> {
+    fn handle_destroy_event_dock(&mut self, window: Window) -> Effects {
         let window_id = window.resource_id();
         self.dock_windows.retain(|w| w.resource_id() != window_id);
 
@@ -522,7 +522,7 @@ impl State {
         effects
     }
 
-    fn handle_destroy_event_managed(&mut self, window: Window) -> Vec<Effect> {
+    fn handle_destroy_event_managed(&mut self, window: Window) -> Effects {
         if let Some(workspace_id) = self.window_to_workspace.remove(&window)
             && let Some(current_workspace) = self.workspaces.get_mut(workspace_id)
         {
@@ -537,7 +537,7 @@ impl State {
         effects
     }
 
-    pub fn on_unmap(&mut self, window: Window) -> Vec<Effect> {
+    pub fn on_unmap(&mut self, window: Window) -> Effects {
         match self.tracked_window_type(window) {
             WindowType::Dock => vec![],
             WindowType::Managed => self.handle_unmap_event_managed(window),
@@ -545,7 +545,7 @@ impl State {
         }
     }
 
-    fn handle_unmap_event_managed(&mut self, window: Window) -> Vec<Effect> {
+    fn handle_unmap_event_managed(&mut self, window: Window) -> Effects {
         let Some(workspace_id) = self.window_workspace(window) else {
             return vec![];
         };
@@ -572,7 +572,7 @@ impl State {
         effects
     }
 
-    pub fn apply_action(&mut self, action: ActionEvent) -> Vec<Effect> {
+    pub fn apply_action(&mut self, action: ActionEvent) -> Effects {
         match action {
             ActionEvent::NextWindow => self.shift_focus(1),
             ActionEvent::PrevWindow => self.shift_focus(-1),
@@ -607,7 +607,7 @@ impl State {
         }
     }
 
-    pub fn startup_finalize(&mut self, current_desktop: Option<usize>) -> Vec<Effect> {
+    pub fn startup_finalize(&mut self, current_desktop: Option<usize>) -> Effects {
         let mut effects = Vec::new();
 
         if !self.dock_windows.is_empty() {
