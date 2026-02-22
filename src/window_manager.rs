@@ -36,8 +36,8 @@ impl WindowManager {
 
         // Create WM check window
         let wm_check_window = Self::create_wm_check_window(&conn, root_window);
-        let x11 = X11::new(conn, root_window, atoms, wm_check_window);
-        let ewmh = EwmhManager::new(&x11);
+        let x11 = X11::new(conn, root_window, atoms);
+        let ewmh = EwmhManager::new(atoms, root_window, wm_check_window);
 
         let state = State::new(
             screen,
@@ -361,8 +361,8 @@ mod window_manager_tests {
         let atoms = Atoms::intern_all(&conn).ok()?;
         let wm_check_window = WindowManager::create_wm_check_window(&conn, root);
 
-        let x11 = X11::new(conn, root, atoms, wm_check_window);
-        let ewmh = EwmhManager::new(&x11);
+        let x11 = X11::new(conn, root, atoms);
+        let ewmh = EwmhManager::new(atoms, root, wm_check_window);
         let state = State::new(
             screen,
             DEFAULT_BORDER_WIDTH,

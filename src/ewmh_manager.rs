@@ -1,4 +1,7 @@
-use xcb::{Xid, x};
+use xcb::{
+    Xid,
+    x::{self, Window},
+};
 
 use std::process;
 
@@ -11,16 +14,16 @@ use crate::{
 
 pub struct EwmhManager {
     atoms: Atoms,
-    root: x::Window,
-    wm_check_window: x::Window,
+    root: Window,
+    wm_check_window: Window,
 }
 
 impl EwmhManager {
-    pub fn new(x11: &X11) -> Self {
+    pub fn new(atoms: Atoms, root: Window, wm_check_window: Window) -> Self {
         Self {
-            atoms: *x11.atoms(),
-            root: x11.root(),
-            wm_check_window: x11.wm_check_window(),
+            atoms,
+            root,
+            wm_check_window,
         }
     }
 
@@ -154,7 +157,7 @@ impl EwmhManager {
         }
     }
 
-    pub fn active_window_effect(&self, window: Option<x::Window>) -> Effect {
+    pub fn active_window_effect(&self, window: Option<Window>) -> Effect {
         Effect::SetWindowProperty {
             window: self.root,
             atom: self.atoms.active_window,
@@ -189,7 +192,7 @@ impl EwmhManager {
         }
     }
 
-    pub fn window_desktop_effect(&self, window: x::Window, workspace: u32) -> Effect {
+    pub fn window_desktop_effect(&self, window: Window, workspace: u32) -> Effect {
         Effect::SetCardinal32 {
             window,
             atom: self.atoms.wm_desktop,
@@ -197,7 +200,7 @@ impl EwmhManager {
         }
     }
 
-    pub fn get_window_desktop(&self, x11: &X11, window: x::Window) -> Option<u32> {
+    pub fn get_window_desktop(&self, x11: &X11, window: Window) -> Option<u32> {
         x11.get_cardinal32(window, self.atoms.wm_desktop)
     }
 
@@ -205,7 +208,7 @@ impl EwmhManager {
         x11.get_cardinal32(self.root, self.atoms.current_desktop)
     }
 
-    pub fn window_fullscreen_state_effect(&self, window: x::Window, fullscreen: bool) -> Effect {
+    pub fn window_fullscreen_state_effect(&self, window: Window, fullscreen: bool) -> Effect {
         let atoms = &self.atoms;
         Effect::SetAtomList {
             window,
