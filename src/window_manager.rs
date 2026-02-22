@@ -348,7 +348,7 @@ impl WindowManager {
                 }
                 xcb::Event::X(x::Event::EnterNotify(ev)) => {
                     debug!("Received EnterNotify event for {:?}", ev.event());
-                    todo!("Add config to enable later");
+                    // TODO Enable in config later
                     // let mut effects = self.state.set_focus(ev.event());
                     // effects.extend(self.ewmh_sync_effects());
                     // self.x11.apply_effects_unchecked(&effects);
