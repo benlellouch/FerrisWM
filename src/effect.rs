@@ -60,4 +60,6 @@ pub enum Effect {
         modifiers: ModMask,
         grab_window: Window,
     },
+    GrabButton(Window),
+    SubscribeEnterNotify(Window),
 }

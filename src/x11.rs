@@ -123,6 +123,8 @@ impl X11 {
                 modifiers,
                 grab_window,
             } => self.grab_key_unchecked(*keycode, *modifiers, *grab_window),
+            Effect::GrabButton(window) => self.grab_button_unchecked(*window),
+            Effect::SubscribeEnterNotify(window) => self.subscribe_enter_notify_unchecked(*window),
         }
     }
 
@@ -180,6 +182,8 @@ impl X11 {
                 modifiers,
                 grab_window,
             } => self.grab_key_checked(*keycode, *modifiers, *grab_window),
+            Effect::GrabButton(window) => self.grab_button_checked(*window),
+            Effect::SubscribeEnterNotify(window) => self.subscribe_enter_notify_checked(*window),
         }
     }
 
@@ -334,6 +338,27 @@ impl X11 {
             key: keycode,
             pointer_mode: x::GrabMode::Async,
             keyboard_mode: x::GrabMode::Async,
+        });
+    }
+
+    fn grab_button_unchecked(&self, window: Window) {
+        self.conn.send_request(&x::GrabButton {
+            owner_events: false,
+            grab_window: window,
+            event_mask: x::EventMask::BUTTON_PRESS,
+            pointer_mode: x::GrabMode::Sync,
+            keyboard_mode: x::GrabMode::Async,
+            confine_to: x::WINDOW_NONE,
+            cursor: x::CURSOR_NONE,
+            button: x::ButtonIndex::N1,
+            modifiers: x::ModMask::ANY,
+        });
+    }
+
+    fn subscribe_enter_notify_unchecked(&self, window: Window) {
+        self.conn.send_request(&x::ChangeWindowAttributes {
+            window,
+            value_list: &[x::Cw::EventMask(EventMask::ENTER_WINDOW)],
         });
     }
 
@@ -512,6 +537,27 @@ impl X11 {
         })]
     }
 
+    fn grab_button_checked(&self, window: Window) -> Vec<VoidCookieChecked> {
+        vec![self.conn.send_request_checked(&x::GrabButton {
+            owner_events: false,
+            grab_window: window,
+            event_mask: x::EventMask::BUTTON_PRESS,
+            pointer_mode: x::GrabMode::Sync,
+            keyboard_mode: x::GrabMode::Async,
+            confine_to: x::WINDOW_NONE,
+            cursor: x::CURSOR_NONE,
+            button: x::ButtonIndex::N1,
+            modifiers: x::ModMask::ANY,
+        })]
+    }
+
+    fn subscribe_enter_notify_checked(&self, window: Window) -> Vec<VoidCookieChecked> {
+        vec![self.conn.send_request_checked(&x::ChangeWindowAttributes {
+            window,
+            value_list: &[x::Cw::EventMask(EventMask::ENTER_WINDOW)],
+        })]
+    }
+
     fn wm_delete_client_message(&self, window: Window) -> x::ClientMessageEvent {
         x::ClientMessageEvent::new(
             window,
@@ -532,6 +578,13 @@ impl X11 {
 
     pub fn check_cookie(&self, cookie: VoidCookieChecked) -> xcb::Result<()> {
         self.conn.check_request(cookie).map_err(Into::into)
+    }
+
+    pub fn allow_events(&self) {
+        self.conn.send_request(&x::AllowEvents {
+            mode: x::Allow::ReplayPointer,
+            time: x::CURRENT_TIME,
+        });
     }
 
     pub fn set_root_event_mask(&self) -> Result<(), ProtocolError> {

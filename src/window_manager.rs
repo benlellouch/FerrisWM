@@ -339,6 +339,20 @@ impl WindowManager {
                     let effects = self.handle_client_message(&ev);
                     self.x11.apply_effects_unchecked(&effects);
                 }
+                xcb::Event::X(x::Event::ButtonPress(ev)) => {
+                    debug!("Received ButtonPress event for {:?}", ev.event());
+                    self.x11.allow_events();
+                    let mut effects = self.state.set_focus(ev.event());
+                    effects.extend(self.ewmh_sync_effects());
+                    self.x11.apply_effects_unchecked(&effects);
+                }
+                xcb::Event::X(x::Event::EnterNotify(ev)) => {
+                    debug!("Received EnterNotify event for {:?}", ev.event());
+                    todo!("Add config to enable later");
+                    // let mut effects = self.state.set_focus(ev.event());
+                    // effects.extend(self.ewmh_sync_effects());
+                    // self.x11.apply_effects_unchecked(&effects);
+                }
                 xcb::Event::X(x::Event::MapNotify(ev)) => {
                     debug!("Window mapped: {:?}", ev.window());
                 }

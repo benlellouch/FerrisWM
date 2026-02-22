@@ -37,6 +37,8 @@ pub static ACTION_MAPPINGS: &[ActionMapping] = &[
     binding!(xkb::Keysym::s, [MOD, SHIFT], ActionEvent::Spawn("flameshot gui")),
     binding!(xkb::Keysym::space, [MOD], ActionEvent::Spawn("rofi -show drun")),
     binding!(xkb::Keysym::r, [MOD,SHIFT], ActionEvent::Spawn("pkill -x FerrisWM")), // Reload the WM
+    binding!(xkb::Keysym::r, [MOD,SHIFT], ActionEvent::Spawn("pkill -x FerrisWM")), // Reload the WM
+
 
     // ==================== MULTIMEDIA BINDINGS ====================
     binding!(xkb::Keysym::XF86_ScrollUp, [], ActionEvent::Spawn("amixer set Master -q 5%+")),
