@@ -488,6 +488,8 @@ impl State {
         }
 
         effects.push(Effect::Map(window));
+        effects.push(Effect::GrabButton(window));
+        effects.push(Effect::SubscribeEnterNotify(window));
 
         if let Some(fs) = self.current_workspace().get_fullscreen_window()
             && self.current_workspace().is_window_mapped(&fs)
@@ -609,6 +611,14 @@ impl State {
 
     pub fn startup_finalize(&mut self, current_desktop: Option<usize>) -> Effects {
         let mut effects = Vec::new();
+
+        // Set up button grabs and enter-notify subscriptions for all managed windows
+        for ws in &self.workspaces {
+            for window in ws.iter_windows() {
+                effects.push(Effect::GrabButton(*window));
+                effects.push(Effect::SubscribeEnterNotify(*window));
+            }
+        }
 
         if !self.dock_windows.is_empty() {
             effects.extend(self.configure_dock_windows());
