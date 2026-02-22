@@ -9,7 +9,6 @@ pub struct X11 {
     conn: Connection,
     root: Window,
     atoms: Atoms,
-    wm_check_window: Window,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -23,21 +22,12 @@ pub enum WindowType {
 }
 
 impl X11 {
-    pub fn new(conn: Connection, root: Window, atoms: Atoms, wm_check_window: Window) -> Self {
-        Self {
-            conn,
-            root,
-            atoms,
-            wm_check_window,
-        }
+    pub fn new(conn: Connection, root: Window, atoms: Atoms) -> Self {
+        Self { conn, root, atoms }
     }
 
     pub const fn root(&self) -> Window {
         self.root
-    }
-
-    pub const fn wm_check_window(&self) -> Window {
-        self.wm_check_window
     }
 
     pub const fn atoms(&self) -> &Atoms {

@@ -5,7 +5,12 @@ use xcb::{
 
 use std::process;
 
-use crate::{atoms::Atoms, config::NUM_WORKSPACES, effect::Effect, x11::X11};
+use crate::{
+    atoms::Atoms,
+    config::NUM_WORKSPACES,
+    effect::{Effect, Effects},
+    x11::X11,
+};
 
 pub struct EwmhManager {
     atoms: Atoms,
@@ -22,7 +27,7 @@ impl EwmhManager {
         }
     }
 
-    pub fn publish_hints(&self) -> Vec<Effect> {
+    pub fn publish_hints(&self) -> Effects {
         let atoms = &self.atoms;
         let root = self.root;
         let check = self.wm_check_window;
@@ -73,7 +78,7 @@ impl EwmhManager {
             Effect::SetUtf8String {
                 window: check,
                 atom: atoms.wm_name,
-                value: "rdwm".to_string(),
+                value: "FerrisWM".to_string(),
             },
             Effect::SetCardinal32 {
                 window: check,
@@ -160,7 +165,7 @@ impl EwmhManager {
         }
     }
 
-    pub fn client_list_effects(&self, windows: &[Window]) -> Vec<Effect> {
+    pub fn client_list_effects(&self, windows: &[x::Window]) -> Effects {
         let values = windows
             .iter()
             .map(xcb::Xid::resource_id)

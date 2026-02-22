@@ -1,5 +1,7 @@
 use xcb::x::{self, ModMask, Window};
 
+pub type Effects = Vec<Effect>;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Effect {
     Map(Window),

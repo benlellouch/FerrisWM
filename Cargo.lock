@@ -3,6 +3,17 @@
 version = 4
 
 [[package]]
+name = "FerrisWM"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "indexmap",
+ "log",
+ "xcb",
+ "xkbcommon",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -227,17 +238,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a338cc41d27e6cc6dce6cefc13a0729dfbb81c262b1f519331575dd80ef3067f"
 dependencies = [
  "proc-macro2",
-]
-
-[[package]]
-name = "rdwm"
-version = "0.1.0"
-dependencies = [
- "env_logger",
- "indexmap",
- "log",
- "xcb",
- "xkbcommon",
 ]
 
 [[package]]
