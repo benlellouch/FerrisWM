@@ -626,9 +626,6 @@ impl State {
 
 #[cfg(test)]
 mod state_tests {
-
-    use std::any::{Any, TypeId};
-
     use xcb::XidNew;
 
     use super::*;

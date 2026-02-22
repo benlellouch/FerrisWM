@@ -349,3 +349,301 @@ impl WindowManager {
         }
     }
 }
+
+#[cfg(test)]
+mod window_manager_tests {
+    use super::*;
+    use xcb::{Xid, XidNew};
+
+    fn try_make_wm() -> Option<WindowManager> {
+        let (conn, _) = Connection::connect(None).ok()?;
+        let (screen, root) = WindowManager::setup_root(&conn);
+        let atoms = Atoms::intern_all(&conn).ok()?;
+        let wm_check_window = WindowManager::create_wm_check_window(&conn, root);
+
+        let x11 = X11::new(conn, root, atoms, wm_check_window);
+        let ewmh = EwmhManager::new(&x11);
+        let state = State::new(
+            screen,
+            DEFAULT_BORDER_WIDTH,
+            DEFAULT_WINDOW_GAP,
+            DEFAULT_DOCK_HEIGHT,
+        );
+
+        Some(WindowManager {
+            x11,
+            ewmh,
+            key_bindings: HashMap::new(),
+            state,
+        })
+    }
+
+    #[test]
+    fn test_keygrab_effects_match_bindings() {
+        let mut wm = match try_make_wm() {
+            Some(wm) => wm,
+            None => return,
+        };
+
+        wm.key_bindings
+            .insert((10, ModMask::SHIFT), ActionEvent::NextWindow);
+        wm.key_bindings
+            .insert((20, ModMask::CONTROL), ActionEvent::PrevWindow);
+
+        let effects = wm.keygrab_effects();
+
+        assert_eq!(effects.len(), 2);
+        assert!(effects.contains(&Effect::GrabKey {
+            keycode: 10,
+            modifiers: ModMask::SHIFT,
+            grab_window: wm.x11.root(),
+        }));
+        assert!(effects.contains(&Effect::GrabKey {
+            keycode: 20,
+            modifiers: ModMask::CONTROL,
+            grab_window: wm.x11.root(),
+        }));
+    }
+
+    #[test]
+    fn test_ewmh_sync_effects_include_workarea_and_active_window() {
+        let mut wm = match try_make_wm() {
+            Some(wm) => wm,
+            None => return,
+        };
+
+        let win1 = Window::new(1);
+        let win2 = Window::new(2);
+        let second_workspace = if NUM_WORKSPACES > 1 { 1 } else { 0 };
+
+        wm.state.track_startup_managed(win1, 0);
+        wm.state.track_startup_managed(win2, second_workspace);
+        let _ = wm.state.set_focus(win1);
+
+        wm.state.track_startup_dock(Window::new(99));
+
+        let effects = wm.ewmh_sync_effects();
+        let atoms = *wm.x11.atoms();
+        let usable_height = wm.state.usable_screen_height();
+        let screen = wm.state.screen();
+
+        let mut expected_workarea = Vec::with_capacity(NUM_WORKSPACES * 4);
+        for _ in 0..NUM_WORKSPACES {
+            expected_workarea.extend_from_slice(&[0, 0, screen.width, usable_height]);
+        }
+
+        assert!(effects.contains(&Effect::SetCardinal32List {
+            window: wm.x11.root(),
+            atom: atoms.workarea,
+            values: expected_workarea,
+        }));
+        assert!(effects.contains(&Effect::SetWindowProperty {
+            window: wm.x11.root(),
+            atom: atoms.active_window,
+            values: vec![win1.resource_id()],
+        }));
+        assert!(effects.contains(&Effect::SetCardinal32 {
+            window: win2,
+            atom: atoms.wm_desktop,
+            value: second_workspace as u32,
+        }));
+        assert!(effects.contains(&Effect::SetAtomList {
+            window: win1,
+            atom: atoms.wm_state,
+            values: vec![],
+        }));
+    }
+
+    #[test]
+    fn test_handle_client_message_current_desktop_updates_state() {
+        let mut wm = match try_make_wm() {
+            Some(wm) => wm,
+            None => return,
+        };
+
+        let atoms = *wm.x11.atoms();
+        let target = if NUM_WORKSPACES > 1 { 1 } else { 0 };
+
+        let ev = x::ClientMessageEvent::new(
+            wm.x11.root(),
+            atoms.current_desktop,
+            x::ClientMessageData::Data32([target as u32, 0, 0, 0, 0]),
+        );
+
+        let effects = wm.handle_client_message(&ev);
+
+        assert_eq!(wm.state.current_workspace_id(), target);
+        assert!(effects.contains(&Effect::SetCardinal32 {
+            window: wm.x11.root(),
+            atom: atoms.current_desktop,
+            value: target as u32,
+        }));
+    }
+
+    #[test]
+    fn test_handle_client_message_ignores_unhandled_type() {
+        let mut wm = match try_make_wm() {
+            Some(wm) => wm,
+            None => return,
+        };
+
+        let win = Window::new(1);
+        wm.state.track_startup_managed(win, 0);
+        let _ = wm.state.set_focus(win);
+
+        let atoms = *wm.x11.atoms();
+        let ev = x::ClientMessageEvent::new(
+            wm.x11.root(),
+            atoms.wm_name,
+            x::ClientMessageData::Data32([0, 0, 0, 0, 0]),
+        );
+
+        let effects = wm.handle_client_message(&ev);
+
+        assert!(effects.is_empty());
+        assert_eq!(wm.state.current_workspace_id(), 0);
+        assert_eq!(wm.state.focused_window(), Some(win));
+    }
+
+    #[test]
+    fn test_handle_client_message_non_data32_returns_empty() {
+        let mut wm = match try_make_wm() {
+            Some(wm) => wm,
+            None => return,
+        };
+
+        let atoms = *wm.x11.atoms();
+        let ev = x::ClientMessageEvent::new(
+            wm.x11.root(),
+            atoms.current_desktop,
+            x::ClientMessageData::Data8([0; 20]),
+        );
+
+        let effects = wm.handle_client_message(&ev);
+        assert!(effects.is_empty());
+    }
+
+    #[test]
+    fn test_handle_client_message_active_window_focuses() {
+        let mut wm = match try_make_wm() {
+            Some(wm) => wm,
+            None => return,
+        };
+
+        let win1 = Window::new(1);
+        let win2 = Window::new(2);
+        wm.state.track_startup_managed(win1, 0);
+        wm.state.track_startup_managed(win2, 0);
+        let _ = wm.state.set_focus(win1);
+
+        let atoms = *wm.x11.atoms();
+        let ev = x::ClientMessageEvent::new(
+            win2,
+            atoms.active_window,
+            x::ClientMessageData::Data32([0, 0, 0, 0, 0]),
+        );
+
+        let effects = wm.handle_client_message(&ev);
+
+        assert_eq!(wm.state.focused_window(), Some(win2));
+        assert!(effects.contains(&Effect::Focus(win2)));
+    }
+
+    #[test]
+    fn test_handle_client_message_close_window_kills_client() {
+        let mut wm = match try_make_wm() {
+            Some(wm) => wm,
+            None => return,
+        };
+
+        // Window::new(42) doesn't exist on the X server, so
+        // supports_wm_delete will error → fallback to KillClient.
+        let target = Window::new(42);
+        let atoms = *wm.x11.atoms();
+        let ev = x::ClientMessageEvent::new(
+            target,
+            atoms.close_window,
+            x::ClientMessageData::Data32([0, 0, 0, 0, 0]),
+        );
+
+        let effects = wm.handle_client_message(&ev);
+        assert!(effects.contains(&Effect::KillClient(target)));
+    }
+
+    #[test]
+    fn test_close_window_fallback_to_kill_on_error() {
+        let wm = match try_make_wm() {
+            Some(wm) => wm,
+            None => return,
+        };
+
+        // A non-existent window triggers the Err branch in close_window.
+        let fake = Window::new(999);
+        let effects = wm.close_window(fake);
+        assert_eq!(effects, vec![Effect::KillClient(fake)]);
+    }
+
+    #[test]
+    fn test_keygrab_effects_empty_bindings() {
+        let wm = match try_make_wm() {
+            Some(wm) => wm,
+            None => return,
+        };
+
+        // try_make_wm creates an empty key_bindings map.
+        let effects = wm.keygrab_effects();
+        assert!(effects.is_empty());
+    }
+
+    #[test]
+    fn test_ewmh_sync_effects_no_windows() {
+        let wm = match try_make_wm() {
+            Some(wm) => wm,
+            None => return,
+        };
+
+        let effects = wm.ewmh_sync_effects();
+        let atoms = *wm.x11.atoms();
+
+        // Should still contain client_list, current_desktop, active_window, workarea.
+        assert!(effects.contains(&Effect::SetWindowProperty {
+            window: wm.x11.root(),
+            atom: atoms.client_list,
+            values: vec![],
+        }));
+        assert!(effects.contains(&Effect::SetWindowProperty {
+            window: wm.x11.root(),
+            atom: atoms.active_window,
+            values: vec![],
+        }));
+        assert!(effects.contains(&Effect::SetCardinal32 {
+            window: wm.x11.root(),
+            atom: atoms.current_desktop,
+            value: 0,
+        }));
+    }
+
+    #[test]
+    fn test_ewmh_sync_effects_fullscreen_window() {
+        let mut wm = match try_make_wm() {
+            Some(wm) => wm,
+            None => return,
+        };
+
+        let win = Window::new(1);
+        wm.state.track_startup_managed(win, 0);
+        let _ = wm.state.set_focus(win);
+        let _ = wm.state.toggle_fullscreen();
+
+        assert!(wm.state.is_window_fullscreen(win));
+
+        let effects = wm.ewmh_sync_effects();
+        let atoms = *wm.x11.atoms();
+
+        assert!(effects.contains(&Effect::SetAtomList {
+            window: win,
+            atom: atoms.wm_state,
+            values: vec![atoms.wm_state_fullscreen.resource_id()],
+        }));
+    }
+}

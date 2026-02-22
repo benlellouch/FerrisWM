@@ -29,11 +29,12 @@ macro_rules! binding {
     };
 }
 
-#[rustfmt::skip] 
+#[rustfmt::skip]
 pub static ACTION_MAPPINGS: &[ActionMapping] = &[
     // ==================== SPAWN BINDINGS ====================
-    binding!(xkb::Keysym::Return, [MOD], ActionEvent::Spawn("st")),
-    binding!(xkb::Keysym::Return, [MOD, SHIFT], ActionEvent::Spawn("x-www-browser")),
+    binding!(xkb::Keysym::Return, [MOD], ActionEvent::Spawn("alacritty")),
+    binding!(xkb::Keysym::Return, [MOD, SHIFT], ActionEvent::Spawn("google-chrome-stable")),
+    binding!(xkb::Keysym::s, [MOD, SHIFT], ActionEvent::Spawn("flameshot gui")),
     binding!(xkb::Keysym::space, [MOD], ActionEvent::Spawn("rofi -show drun")),
     binding!(xkb::Keysym::r, [MOD,SHIFT], ActionEvent::Spawn("pkill -x FerrisWM")), // Reload the WM
 
