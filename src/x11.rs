@@ -2,7 +2,7 @@ use crate::{atoms::Atoms, effect::Effect};
 use log::error;
 use xcb::{
     Connection, ProtocolError, VoidCookieChecked, Xid,
-    x::{self, EventMask, Window},
+    x::{self, Atom, EventMask, Window},
 };
 
 pub struct X11 {
@@ -401,8 +401,14 @@ impl X11 {
 
     pub fn classify_window(&self, window: Window) -> WindowType {
         // Docks are special-cased: even if override-redirect is set, we want to treat them as docks.
-        if self.is_dock_window(window) {
+        if self.is_window_type(window, self.atoms.wm_window_type_dock) {
             return WindowType::Dock;
+        }
+
+        if self.is_window_type(window, self.atoms.wm_window_type_dialog)
+            || self.is_window_type(window, self.atoms.wm_window_type_utility)
+        {
+            return WindowType::Unmanaged;
         }
 
         match self.is_override_redirect(window) {
@@ -419,7 +425,7 @@ impl X11 {
         Ok(reply.override_redirect())
     }
 
-    fn is_dock_window(&self, window: Window) -> bool {
+    fn is_window_type(&self, window: Window, atom: Atom) -> bool {
         let cookie = self.conn.send_request(&x::GetProperty {
             delete: false,
             window,
@@ -433,7 +439,7 @@ impl X11 {
             let atoms_vec: &[x::Atom] = reply.value();
             atoms_vec
                 .iter()
-                .any(|a| a.resource_id() == self.atoms.wm_window_type_dock.resource_id())
+                .any(|a| a.resource_id() == atom.resource_id())
         } else {
             false
         }

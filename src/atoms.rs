@@ -26,6 +26,8 @@ atoms_struct! {
         // ===== EWMH per-window properties =====
         pub wm_window_type => b"_NET_WM_WINDOW_TYPE" only_if_exists = false,
         pub wm_window_type_dock => b"_NET_WM_WINDOW_TYPE_DOCK" only_if_exists = false,
+        pub wm_window_type_dialog => b"_NET_WM_WINDOW_TYPE_DIALOG" only_if_exists = false,
+        pub wm_window_type_utility => b"_NET_WM_WINDOW_TYPE_UTILITY" only_if_exists = false,
         pub wm_strut_partial => b"_NET_WM_STRUT_PARTIAL" only_if_exists = false,
         pub wm_state => b"_NET_WM_STATE" only_if_exists = false,
         pub wm_state_fullscreen => b"_NET_WM_STATE_FULLSCREEN" only_if_exists = false,
