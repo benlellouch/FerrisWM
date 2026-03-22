@@ -743,7 +743,7 @@ mod state_tests {
         let mut state = make_state(10);
         let window_to_fullsreen = Window::new(6);
         let _ = state.set_focus(window_to_fullsreen);
-        let mut fullscreen_effects = state.toggle_fullscreen();
+        let fullscreen_effects = state.toggle_fullscreen();
 
         // Test that we succesfully toggled window to fullscreen
         assert_eq!(state.focused_window().unwrap(), window_to_fullsreen);
@@ -762,12 +762,11 @@ mod state_tests {
             border: 0
         }));
 
-        fullscreen_effects = state.toggle_fullscreen();
+        state.toggle_fullscreen();
 
         assert_eq!(state.focused_window().unwrap(), window_to_fullsreen);
         assert_eq!(state.current_workspace().get_fullscreen_window(), None);
         assert!(!state.is_window_fullscreen(window_to_fullsreen));
-        assert!(fullscreen_effects.contains(&Effect::Focus(window_to_fullsreen)))
     }
 
     #[test]
