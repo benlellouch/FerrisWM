@@ -292,16 +292,19 @@ impl State {
             Some(fullscreen) => {
                 if fullscreen == window && !set {
                     self.current_workspace_mut().clear_fullscreen();
+                    effects.extend(self.configure_windows(self.current_workspace));
                 }
             }
             None => {
-                self.set_focus(window);
-                self.current_workspace_mut().set_fullscreen(window);
-                effects.push(Effect::Raise(window));
+                if set {
+                    self.set_focus(window);
+                    self.current_workspace_mut().set_fullscreen(window);
+                    effects.push(Effect::Raise(window));
+                    effects.extend(self.configure_windows(self.current_workspace));
+                }
             }
         }
 
-        effects.extend(self.configure_windows(self.current_workspace));
         effects
     }
 
@@ -892,6 +895,50 @@ mod state_tests {
         assert!(effects.contains(&Effect::Map(new_window)));
         assert!(!effects.contains(&Effect::Focus(new_window)));
         assert!(state.current_workspace().is_window_mapped(&new_window));
+    }
+
+    #[test]
+    fn test_unset_fullscreen_does_not_set_fullscreen() {
+        let mut state = make_state_with_windows(&[(0, 1, true)], 25);
+        let window = Window::new(1);
+
+        let effects = state.set_fullscreen(window, false);
+        assert!(!effects.contains(&Effect::Raise(window)));
+        assert!(!state.is_window_fullscreen(window))
+    }
+
+    #[test]
+    fn test_unset_fullscreen_on_fullscreen_window() {
+        let mut state = make_state_with_windows(&[(0, 1, true)], 25);
+        let window = Window::new(1);
+        state.set_focus(window);
+        state.toggle_fullscreen();
+        assert!(state.is_window_fullscreen(window));
+
+        let effects = state.set_fullscreen(window, false);
+        assert!(!state.is_window_fullscreen(window))
+    }
+
+    #[test]
+    fn test_set_fullscreen_does_set_fullscreen() {
+        let mut state = make_state_with_windows(&[(0, 1, true)], 25);
+        let window = Window::new(1);
+
+        let effects = state.set_fullscreen(window, true);
+        assert!(effects.contains(&Effect::Raise(window)));
+        assert!(state.is_window_fullscreen(window))
+    }
+
+    #[test]
+    fn test_set_fullscreen_on_already_fullscreen() {
+        let mut state = make_state_with_windows(&[(0, 1, true)], 25);
+        let window = Window::new(1);
+        state.set_focus(window);
+        state.toggle_fullscreen();
+
+        let effects = state.set_fullscreen(window, true);
+        assert!(state.is_window_fullscreen(window));
+        assert!(effects.is_empty());
     }
 
     #[test]
