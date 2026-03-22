@@ -1,6 +1,7 @@
 use log::{debug, error, info};
 use std::process::Command;
 use std::{collections::HashMap, process::Stdio};
+use xcb::Xid;
 
 use xcb::{
     Connection,
@@ -253,6 +254,18 @@ impl WindowManager {
         if msg_type == atoms.close_window {
             let target = ev.window();
             return self.close_window(target);
+        }
+
+        if msg_type == atoms.wm_state {
+            let atom_id = data32.get(1);
+            let set: bool = 1 == *data32.get(0).unwrap_or(&0);
+            if atom_id == Some(&atoms.wm_state_fullscreen.resource_id()) {
+                let target = ev.window();
+                let mut effects = Vec::new();
+                effects.extend(self.state.set_fullscreen(target, set));
+                effects.extend(self.ewmh_sync_effects());
+                return effects;
+            }
         }
 
         vec![]

@@ -276,7 +276,32 @@ impl State {
         }
 
         effects.extend(self.configure_windows(self.current_workspace));
-        effects.extend(self.set_focus(focused));
+        effects
+    }
+
+    pub fn set_fullscreen(&mut self, window: Window, set: bool) -> Effects {
+        let mut effects = Vec::new();
+
+        if let Some(workspace) = self.window_workspace(window)
+            && self.current_workspace_id() != workspace
+        {
+            return effects;
+        }
+
+        match self.current_workspace().get_fullscreen_window() {
+            Some(fullscreen) => {
+                if fullscreen == window && !set {
+                    self.current_workspace_mut().clear_fullscreen();
+                }
+            }
+            None => {
+                self.set_focus(window);
+                self.current_workspace_mut().set_fullscreen(window);
+                effects.push(Effect::Raise(window));
+            }
+        }
+
+        effects.extend(self.configure_windows(self.current_workspace));
         effects
     }
 
