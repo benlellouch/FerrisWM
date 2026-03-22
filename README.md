@@ -8,7 +8,7 @@ FerrisWM is a small, minimalist tiling window manager written in Rust using XCB.
 
 
 <p align="center">
-  <img src="resources/rdwm-2.gif" width="1000" />
+  <img src="resources/ferris_wm.gif" width="1000" />
 </p>
 
 

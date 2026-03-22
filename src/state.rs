@@ -914,7 +914,7 @@ mod state_tests {
         state.toggle_fullscreen();
         assert!(state.is_window_fullscreen(window));
 
-        let effects = state.set_fullscreen(window, false);
+        state.set_fullscreen(window, false);
         assert!(!state.is_window_fullscreen(window))
     }
 
