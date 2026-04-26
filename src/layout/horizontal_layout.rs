@@ -13,7 +13,6 @@ impl Layout for HorizontalLayout {
         let total_weights: u32 = weights.iter().sum();
         let total_border = border_width + window_gap;
         let inner_h = pad(area.h, total_border);
-        let partitions = area.w / total_weights;
 
         let mut cumulative = 0u32;
         let layout: Vec<Rect> = weights
@@ -21,7 +20,7 @@ impl Layout for HorizontalLayout {
             .map(|weight| {
                 let cell = (area.w * weight) / total_weights;
                 let inner_w = pad(cell, total_border);
-                let x = cumulative * partitions + window_gap;
+                let x = (area.w * cumulative) / total_weights + window_gap;
                 cumulative += weight;
                 Rect {
                     x: x as i32,
@@ -305,6 +304,37 @@ mod tests {
         }
     }
 
+    #[test]
+    fn large_weights_no_overlap() {
+        // area.w=1007, weights=[100,100]: r = 1007 % 200 = 7, r*weight=700 >= 200
+        // This triggered overlap with the partitions-based x formula.
+        // Window 0: cell = (1007*100)/200 = 503, x = 0, spans [0, 503)
+        // Window 1: cell = 503, x = (1007*100)/200 = 503, spans [503, 1006)
+        let rects = HorizontalLayout.generate_layout(area(1007, 800), &[100, 100], 0, 0);
+        assert_eq!(rects.len(), 2);
+        assert_eq!(rects[0].x, 0);
+        assert_eq!(rects[0].w, 503);
+        // Window 1 must start no earlier than where window 0 ends
+        assert!(rects[1].x as u32 >= rects[0].x as u32 + rects[0].w,
+            "windows overlap: w0=[{}, {}), w1 starts at {}",
+            rects[0].x, rects[0].x as u32 + rects[0].w, rects[1].x);
+        assert_eq!(rects[1].x, 503);
+        assert_eq!(rects[1].w, 503);
+    }
+
+    #[test]
+    fn no_overlap_uneven_area_width() {
+        // area.w=10, weights=[3,3]: this is the minimal case that triggered overlap.
+        // total_weights=6, r=4, r*weight=12 >= 6 → overlap with old formula.
+        // Window 0: cell=(10*3)/6=5, x=0, spans [0,5)
+        // Window 1: cell=5, x=(10*3)/6=5, spans [5,10)
+        let rects = HorizontalLayout.generate_layout(area(10, 100), &[3, 3], 0, 0);
+        assert_eq!(rects.len(), 2);
+        assert!(rects[1].x as u32 >= rects[0].x as u32 + rects[0].w,
+            "windows overlap: w0=[{}, {}), w1 starts at {}",
+            rects[0].x, rects[0].x as u32 + rects[0].w, rects[1].x);
+    }
+
     // ── pad clamp edge case (very small cell) ───────────────────────
 
     #[test]
@@ -356,11 +386,9 @@ mod tests {
         assert_eq!(rects[1].w, rects[2].w);
     }
 
-    // ── empty weights panics (division by zero) ─────────────────────
-
     #[test]
-    #[should_panic]
-    fn empty_weights_panics() {
-        HorizontalLayout.generate_layout(area(1000, 800), &[], 0, 0);
+    fn empty_weights_returns_empty_layout() {
+        let rects = HorizontalLayout.generate_layout(area(1000, 800), &[], 0, 0);
+        assert!(rects.is_empty());
     }
 }

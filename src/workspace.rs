@@ -9,10 +9,10 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(window: Window) -> Self {
+    pub fn new(window: Window, size: u32) -> Self {
         Client {
             window,
-            size: 1,
+            size,
             is_mapped: true,
         }
     }
@@ -41,11 +41,23 @@ impl Client {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive( Debug)]
 pub struct Workspace {
     clients: IndexMap<Window, Client>,
     focus: Option<Window>,
     fullscreen: Option<Window>,
+    default_window_weight: u32,
+}
+
+impl Default for Workspace {
+    fn default() -> Self {
+        Workspace {
+            clients: IndexMap::new(),
+            focus: None,
+            fullscreen: None,
+            default_window_weight: crate::config::DEFAULT_WINDOW_WEIGHT,
+        }
+    }
 }
 
 impl Workspace {
@@ -100,7 +112,7 @@ impl Workspace {
     }
 
     pub fn push_window(&mut self, window: Window) {
-        self.clients.insert(window, Client::new(window));
+        self.clients.insert(window, Client::new(window, self.default_window_weight));
         if self.focus.is_none() {
             self.set_focus(window);
         }
@@ -225,7 +237,7 @@ mod client_tests {
     #[test]
     fn test_weight_at_min_bound() {
         let window = Window::new(0);
-        let mut client = Client::new(window);
+        let mut client = Client::new(window,1);
 
         client.decrease_window_size(2);
         assert_eq!(client.size(), 1);
@@ -234,11 +246,7 @@ mod client_tests {
     #[test]
     fn test_decrease_weight() {
         let window = Window::new(0);
-        let mut client = Client {
-            window,
-            size: 5,
-            is_mapped: true,
-        };
+        let mut client = Client::new(window,5);
 
         client.decrease_window_size(2);
         assert_eq!(client.size(), 3);
@@ -247,7 +255,7 @@ mod client_tests {
     #[test]
     fn test_increase_weight() {
         let window = Window::new(0);
-        let mut client = Client::new(window);
+        let mut client = Client::new(window,1);
 
         client.increase_window_size(1);
         assert_eq!(client.size(), 2);
