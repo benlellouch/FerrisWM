@@ -116,6 +116,10 @@ impl State {
         self.workspaces.get(workspace_id)
     }
 
+    pub fn get_workspace_pub(&self, workspace_id: usize) -> Option<&Workspace> {
+        self.workspaces.get(workspace_id)
+    }
+
     fn get_workspace_mut(&mut self, workspace_id: usize) -> Option<&mut Workspace> {
         self.workspaces.get_mut(workspace_id)
     }
@@ -131,7 +135,13 @@ impl State {
             return WindowType::Dock;
         }
 
-        if self.window_workspace(window).is_some() {
+        if let Some(ws_id) = self.window_workspace(window) {
+            if self
+                .get_workspace(ws_id)
+                .is_some_and(|ws| ws.is_floating(window))
+            {
+                return WindowType::Floating;
+            }
             return WindowType::Managed;
         }
 
@@ -165,36 +175,50 @@ impl State {
                 .iter_clients()
                 .filter(|client| client.is_mapped())
                 .collect();
-            if clients.is_empty() {
-                return effects;
+
+            if !clients.is_empty() {
+                let weights: Vec<u32> = clients.iter().map(|client| client.size()).collect();
+                let area = Rect {
+                    x: 0,
+                    y: 0,
+                    w: self.screen.width,
+                    h: self.usable_screen_height(),
+                };
+                let layout = self.layout_manager.get_current_layout().generate_layout(
+                    area,
+                    &weights,
+                    self.border_width,
+                    self.window_gap,
+                );
+
+                effects.extend(
+                    clients
+                        .iter()
+                        .zip(layout)
+                        .map(|(client, rect)| Effect::Configure {
+                            window: client.window(),
+                            x: rect.x,
+                            y: rect.y,
+                            w: rect.w,
+                            h: rect.h,
+                            border: self.border_width,
+                        }),
+                );
             }
 
-            let weights: Vec<u32> = clients.iter().map(|client| client.size()).collect();
-            let area = Rect {
-                x: 0,
-                y: 0,
-                w: self.screen.width,
-                h: self.usable_screen_height(),
-            };
-            let layout = self.layout_manager.get_current_layout().generate_layout(
-                area,
-                &weights,
-                self.border_width,
-                self.window_gap,
-            );
-
-            effects = clients
-                .iter()
-                .zip(layout)
-                .map(|(client, rect)| Effect::Configure {
-                    window: client.window(),
-                    x: rect.x,
-                    y: rect.y,
-                    w: rect.w,
-                    h: rect.h,
-                    border: self.border_width,
-                })
-                .collect();
+            // Floating windows sit above tiled windows and keep their own geometry.
+            for fc in current_workspace.iter_floating_clients() {
+                if fc.is_mapped() {
+                    effects.push(Effect::ConfigurePositionSize {
+                        window: fc.window(),
+                        x: fc.x,
+                        y: fc.y,
+                        w: fc.w,
+                        h: fc.h,
+                    });
+                    effects.push(Effect::Raise(fc.window()));
+                }
+            }
         }
 
         effects
@@ -252,6 +276,9 @@ impl State {
             });
             effects.push(Effect::Focus(window));
             if fullscreen_window == Some(window) {
+                effects.push(Effect::Raise(window));
+            } else if self.current_workspace().is_floating(window) {
+                // Floating windows are always kept above tiled windows.
                 effects.push(Effect::Raise(window));
             }
         }
@@ -338,11 +365,22 @@ impl State {
         }
 
         let old_workspace_id = self.current_workspace;
-        let old_windows: Vec<Window> = self
+
+        // Collect tiled windows to hide.
+        let old_tiled: Vec<Window> = self
             .workspaces
             .get(old_workspace_id)
             .expect("Workspace should never be out of bounds")
             .iter_windows()
+            .copied()
+            .collect();
+
+        // Collect floating windows to hide.
+        let old_floating: Vec<Window> = self
+            .workspaces
+            .get(old_workspace_id)
+            .expect("Workspace should never be out of bounds")
+            .iter_floating_windows()
             .copied()
             .collect();
 
@@ -351,28 +389,48 @@ impl State {
                 .workspaces
                 .get_mut(old_workspace_id)
                 .expect("Workspace should never be out of bounds");
-            for &win in &old_windows {
+            for &win in &old_tiled {
                 old_ws.set_client_mapped(&win, false);
+            }
+            for win in &old_floating {
+                old_ws.set_floating_client_mapped(win, false);
             }
         }
 
-        for win in old_windows {
+        for win in old_tiled {
+            effects.push(Effect::Unmap(win));
+        }
+        for win in old_floating {
             effects.push(Effect::Unmap(win));
         }
 
         self.current_workspace = new_workspace_id;
 
-        let new_windows: Vec<Window> = self.current_workspace().iter_windows().copied().collect();
+        // Collect tiled windows to show.
+        let new_tiled: Vec<Window> = self.current_workspace().iter_windows().copied().collect();
+
+        // Collect floating windows to show.
+        let new_floating: Vec<Window> = self
+            .current_workspace()
+            .iter_floating_windows()
+            .copied()
+            .collect();
 
         {
             let new_ws = self.current_workspace_mut();
-            for win in &new_windows {
+            for win in &new_tiled {
                 new_ws.set_client_mapped(win, true);
+            }
+            for win in &new_floating {
+                new_ws.set_floating_client_mapped(win, true);
             }
         }
 
-        for win in new_windows {
+        for win in new_tiled {
             effects.push(Effect::Map(win));
+        }
+        for win in &new_floating {
+            effects.push(Effect::Map(*win));
         }
 
         effects.extend(self.configure_windows(self.current_workspace));
@@ -387,6 +445,14 @@ impl State {
         let mut effects = Vec::new();
         if workspace_id >= NUM_WORKSPACES || workspace_id == self.current_workspace_id() {
             return effects;
+        }
+
+        let Some(focused) = self.current_workspace().get_focus_window() else {
+            return effects;
+        };
+
+        if self.current_workspace().is_floating(focused) {
+            return self.send_floating_to_workspace(focused, workspace_id);
         }
 
         if let Some(window_to_send) = self.current_workspace_mut().removed_focused_window()
@@ -409,6 +475,39 @@ impl State {
             if let Some(focus) = self.current_workspace().get_focus_window() {
                 effects.extend(self.set_focus(focus));
             }
+        }
+
+        effects
+    }
+
+    fn send_floating_to_workspace(&mut self, window: Window, workspace_id: usize) -> Effects {
+        let mut effects = Vec::new();
+
+        // Capture geometry before removing the client.
+        let Some(fc) = self.current_workspace().get_floating_client(window) else {
+            return effects;
+        };
+        let (x, y, w, h) = (fc.x, fc.y, fc.w, fc.h);
+
+        self.current_workspace_mut().remove_floating_client(window);
+
+        if let Some(new_ws) = self.workspaces.get_mut(workspace_id) {
+            new_ws.push_floating_window(window, x, y, w, h);
+            new_ws.set_floating_client_mapped(&window, false);
+        }
+
+        self.window_to_workspace.insert(window, workspace_id);
+
+        effects.push(Effect::Unmap(window));
+        effects.push(Effect::SetBorder {
+            window,
+            pixel: self.screen.normal_border_pixel,
+            width: self.border_width,
+        });
+
+        effects.extend(self.configure_windows(self.current_workspace));
+        if let Some(focus) = self.current_workspace().get_focus_window() {
+            effects.extend(self.set_focus(focus));
         }
 
         effects
@@ -481,7 +580,57 @@ impl State {
             WindowType::Unmanaged => vec![Effect::Map(window)],
             WindowType::Dock => self.handle_map_request_dock(window),
             WindowType::Managed => self.handle_map_request_managed(window),
+            WindowType::Floating => {
+                // Caller should use on_map_request_floating with preferred size;
+                // fall back to defaults when called through this path.
+                self.on_map_request_floating(
+                    window,
+                    crate::config::DEFAULT_FLOAT_WIDTH,
+                    crate::config::DEFAULT_FLOAT_HEIGHT,
+                )
+            }
         }
+    }
+
+    /// Map a floating window with a specific preferred size.
+    /// The window is centered on-screen at the given dimensions.
+    pub fn on_map_request_floating(&mut self, window: Window, pref_w: u32, pref_h: u32) -> Effects {
+        let mut effects = Vec::new();
+
+        let w = pref_w.max(crate::config::MIN_FLOAT_WIDTH);
+        let h = pref_h.max(crate::config::MIN_FLOAT_HEIGHT);
+        let x = ((self.screen.width.saturating_sub(w)) / 2) as i32;
+        let y = ((self.usable_screen_height().saturating_sub(h)) / 2) as i32;
+
+        match self.current_workspace_mut().get_floating_client_mut(window) {
+            Some(fc) => {
+                fc.set_mapped(true);
+            }
+            None => {
+                self.current_workspace_mut()
+                    .push_floating_window(window, x, y, w, h);
+                self.window_to_workspace
+                    .insert(window, self.current_workspace);
+            }
+        }
+
+        effects.push(Effect::Map(window));
+        effects.push(Effect::Raise(window));
+        effects.push(Effect::GrabButton(window));
+        effects.push(Effect::GrabButtonSuperMove(window));
+        effects.push(Effect::GrabButtonSuperResize(window));
+        effects.push(Effect::SubscribeEnterNotify(window));
+        effects.push(Effect::ConfigurePositionSize { window, x, y, w, h });
+
+        if let Some(fs) = self.current_workspace().get_fullscreen_window()
+            && self.current_workspace().is_window_mapped(&fs)
+        {
+            // Don't steal focus from a fullscreen window.
+        } else {
+            effects.extend(self.set_focus(window));
+        }
+
+        effects
     }
 
     fn handle_map_request_dock(&mut self, window: Window) -> Effects {
@@ -517,6 +666,8 @@ impl State {
 
         effects.push(Effect::Map(window));
         effects.push(Effect::GrabButton(window));
+        effects.push(Effect::GrabButtonSuperMove(window));
+        effects.push(Effect::GrabButtonSuperResize(window));
         effects.push(Effect::SubscribeEnterNotify(window));
 
         if let Some(fs) = self.current_workspace().get_fullscreen_window()
@@ -535,6 +686,7 @@ impl State {
         match self.tracked_window_type(window) {
             WindowType::Dock => self.handle_destroy_event_dock(window),
             WindowType::Managed => self.handle_destroy_event_managed(window),
+            WindowType::Floating => self.handle_destroy_event_floating(window),
             WindowType::Unmanaged => vec![],
         }
     }
@@ -567,10 +719,26 @@ impl State {
         effects
     }
 
+    fn handle_destroy_event_floating(&mut self, window: Window) -> Effects {
+        if let Some(workspace_id) = self.window_to_workspace.remove(&window)
+            && let Some(ws) = self.workspaces.get_mut(workspace_id)
+        {
+            ws.remove_floating_client(window);
+        }
+
+        let mut effects = Vec::new();
+        effects.extend(self.configure_windows(self.current_workspace));
+        if let Some(focus) = self.current_workspace().get_focus_window() {
+            effects.extend(self.set_focus(focus));
+        }
+        effects
+    }
+
     pub fn on_unmap(&mut self, window: Window) -> Effects {
         match self.tracked_window_type(window) {
             WindowType::Dock => vec![],
             WindowType::Managed => self.handle_unmap_event_managed(window),
+            WindowType::Floating => self.handle_unmap_event_floating(window),
             WindowType::Unmanaged => vec![],
         }
     }
@@ -602,6 +770,30 @@ impl State {
         effects
     }
 
+    fn handle_unmap_event_floating(&mut self, window: Window) -> Effects {
+        let Some(workspace_id) = self.window_workspace(window) else {
+            return vec![];
+        };
+
+        let mut changed = false;
+        if let Some(ws) = self.workspaces.get_mut(workspace_id) {
+            if let Some(fc) = ws.get_floating_client_mut(window) {
+                if fc.is_mapped() {
+                    ws.set_floating_client_mapped(&window, false);
+                    changed = true;
+                }
+            }
+        }
+
+        if workspace_id != self.current_workspace || !changed {
+            return vec![];
+        }
+
+        let mut effects = Vec::new();
+        effects.extend(self.configure_windows(self.current_workspace));
+        effects
+    }
+
     pub fn apply_action(&mut self, action: ActionEvent) -> Effects {
         match action {
             ActionEvent::NextWindow => self.shift_focus(1),
@@ -616,6 +808,7 @@ impl State {
             ActionEvent::DecreaseWindowGap(increment) => self.decrease_window_gap(increment),
             ActionEvent::ToggleFullscreen => self.toggle_fullscreen(),
             ActionEvent::CycleLayout => self.cycle_layout(),
+            // ToggleFloating requires preferred size from X11; handled in window_manager.rs.
             _ => vec![],
         }
     }
@@ -637,13 +830,104 @@ impl State {
         }
     }
 
+    pub fn track_startup_floating(
+        &mut self,
+        window: Window,
+        workspace_id: usize,
+        x: i32,
+        y: i32,
+        w: u32,
+        h: u32,
+    ) {
+        if let Some(ws) = self.get_workspace_mut(workspace_id) {
+            ws.push_floating_window(window, x, y, w, h);
+            self.window_to_workspace.insert(window, workspace_id);
+        }
+    }
+
+    pub fn is_window_floating(&self, window: Window) -> bool {
+        self.window_workspace(window)
+            .and_then(|ws_id| self.get_workspace(ws_id))
+            .is_some_and(|ws| ws.is_floating(window))
+    }
+
+    /// Update the stored geometry of a floating window (called during drag).
+    pub fn update_floating_geometry(
+        &mut self,
+        window: Window,
+        x: i32,
+        y: i32,
+        w: u32,
+        h: u32,
+    ) {
+        if let Some(ws_id) = self.window_workspace(window)
+            && let Some(ws) = self.get_workspace_mut(ws_id)
+            && let Some(fc) = ws.get_floating_client_mut(window)
+        {
+            fc.update_geometry(x, y, w, h);
+        }
+    }
+
+    /// Toggle the focused window between floating and tiled.
+    /// `pref_w` / `pref_h` are used when promoting a tiled window to floating.
+    pub fn toggle_floating(&mut self, pref_w: u32, pref_h: u32) -> Effects {
+        let Some(focused) = self.current_workspace().get_focus_window() else {
+            return vec![];
+        };
+
+        if self.current_workspace().is_floating(focused) {
+            self.float_to_tiled(focused)
+        } else if self.current_workspace().index_of_window(&focused).is_some() {
+            self.tiled_to_float(focused, pref_w, pref_h)
+        } else {
+            vec![]
+        }
+    }
+
+    fn tiled_to_float(&mut self, window: Window, pref_w: u32, pref_h: u32) -> Effects {
+        self.current_workspace_mut().remove_client(window);
+
+        let w = pref_w.max(crate::config::MIN_FLOAT_WIDTH);
+        let h = pref_h.max(crate::config::MIN_FLOAT_HEIGHT);
+        let x = ((self.screen.width.saturating_sub(w)) / 2) as i32;
+        let y = ((self.usable_screen_height().saturating_sub(h)) / 2) as i32;
+
+        self.current_workspace_mut()
+            .push_floating_window(window, x, y, w, h);
+
+        let mut effects = Vec::new();
+        effects.extend(self.configure_windows(self.current_workspace));
+        effects.push(Effect::ConfigurePositionSize { window, x, y, w, h });
+        effects.push(Effect::Raise(window));
+        effects.extend(self.set_focus(window));
+        effects
+    }
+
+    fn float_to_tiled(&mut self, window: Window) -> Effects {
+        self.current_workspace_mut().remove_floating_client(window);
+        self.current_workspace_mut().push_window(window);
+
+        let mut effects = Vec::new();
+        effects.extend(self.configure_windows(self.current_workspace));
+        effects.extend(self.set_focus(window));
+        effects
+    }
+
     pub fn startup_finalize(&mut self, current_desktop: Option<usize>) -> Effects {
         let mut effects = Vec::new();
 
-        // Set up button grabs and enter-notify subscriptions for all managed windows
+        // Set up button grabs and enter-notify subscriptions for all managed windows.
         for ws in &self.workspaces {
             for window in ws.iter_windows() {
                 effects.push(Effect::GrabButton(*window));
+                effects.push(Effect::GrabButtonSuperMove(*window));
+                effects.push(Effect::GrabButtonSuperResize(*window));
+                effects.push(Effect::SubscribeEnterNotify(*window));
+            }
+            for window in ws.iter_floating_windows() {
+                effects.push(Effect::GrabButton(*window));
+                effects.push(Effect::GrabButtonSuperMove(*window));
+                effects.push(Effect::GrabButtonSuperResize(*window));
                 effects.push(Effect::SubscribeEnterNotify(*window));
             }
         }

@@ -35,5 +35,9 @@ atoms_struct! {
         pub wm_protocols => b"WM_PROTOCOLS" only_if_exists = false,
         pub wm_delete_window => b"WM_DELETE_WINDOW" only_if_exists = false,
         pub wm_desktop => b"_NET_WM_DESKTOP" only_if_exists = false,
+
+        // ===== ICCCM size hints =====
+        pub wm_normal_hints => b"WM_NORMAL_HINTS" only_if_exists = false,
+        pub wm_size_hints => b"WM_SIZE_HINTS" only_if_exists = false,
     }
 }

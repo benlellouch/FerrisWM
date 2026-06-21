@@ -41,9 +41,52 @@ impl Client {
     }
 }
 
-#[derive( Debug)]
+#[derive(Debug, Clone)]
+pub struct FloatingClient {
+    window: Window,
+    pub x: i32,
+    pub y: i32,
+    pub w: u32,
+    pub h: u32,
+    is_mapped: bool,
+}
+
+impl FloatingClient {
+    pub fn new(window: Window, x: i32, y: i32, w: u32, h: u32) -> Self {
+        FloatingClient {
+            window,
+            x,
+            y,
+            w,
+            h,
+            is_mapped: true,
+        }
+    }
+
+    pub fn window(&self) -> Window {
+        self.window
+    }
+
+    pub fn is_mapped(&self) -> bool {
+        self.is_mapped
+    }
+
+    pub fn set_mapped(&mut self, mapped: bool) {
+        self.is_mapped = mapped;
+    }
+
+    pub fn update_geometry(&mut self, x: i32, y: i32, w: u32, h: u32) {
+        self.x = x;
+        self.y = y;
+        self.w = w;
+        self.h = h;
+    }
+}
+
+#[derive(Debug)]
 pub struct Workspace {
     clients: IndexMap<Window, Client>,
+    floating_clients: IndexMap<Window, FloatingClient>,
     focus: Option<Window>,
     fullscreen: Option<Window>,
     default_window_weight: u32,
@@ -53,6 +96,7 @@ impl Default for Workspace {
     fn default() -> Self {
         Workspace {
             clients: IndexMap::new(),
+            floating_clients: IndexMap::new(),
             focus: None,
             fullscreen: None,
             default_window_weight: crate::config::DEFAULT_WINDOW_WEIGHT,
@@ -99,12 +143,37 @@ impl Workspace {
         self.update_focus();
     }
 
+    pub fn set_floating_client_mapped(&mut self, window: &Window, mapped: bool) {
+        if let Some(fc) = self.floating_clients.get_mut(window) {
+            fc.set_mapped(mapped);
+        }
+        self.update_focus();
+    }
+
     pub fn is_window_mapped(&self, window: &Window) -> bool {
         self.clients.get(window).is_some_and(|c| c.is_mapped())
+            || self
+                .floating_clients
+                .get(window)
+                .is_some_and(|fc| fc.is_mapped())
+    }
+
+    pub fn is_floating(&self, window: Window) -> bool {
+        self.floating_clients.contains_key(&window)
+    }
+
+    pub fn get_floating_client(&self, window: Window) -> Option<&FloatingClient> {
+        self.floating_clients.get(&window)
+    }
+
+    pub fn get_floating_client_mut(&mut self, window: Window) -> Option<&mut FloatingClient> {
+        self.floating_clients.get_mut(&window)
     }
 
     pub fn set_focus(&mut self, window: Window) -> bool {
-        if self.clients.contains_key(&window) && self.is_window_mapped(&window) {
+        if (self.clients.contains_key(&window) || self.floating_clients.contains_key(&window))
+            && self.is_window_mapped(&window)
+        {
             self.focus = Some(window);
             return true;
         }
@@ -112,11 +181,20 @@ impl Workspace {
     }
 
     pub fn push_window(&mut self, window: Window) {
-        self.clients.insert(window, Client::new(window, self.default_window_weight));
+        self.clients
+            .insert(window, Client::new(window, self.default_window_weight));
         if self.focus.is_none() {
             self.set_focus(window);
         }
         self.update_focus();
+    }
+
+    pub fn push_floating_window(&mut self, window: Window, x: i32, y: i32, w: u32, h: u32) {
+        self.floating_clients
+            .insert(window, FloatingClient::new(window, x, y, w, h));
+        if self.focus.is_none() {
+            self.set_focus(window);
+        }
     }
 
     pub fn remove_client(&mut self, window: Window) -> Option<Client> {
@@ -137,6 +215,12 @@ impl Workspace {
         client
     }
 
+    pub fn remove_floating_client(&mut self, window: Window) -> Option<FloatingClient> {
+        let fc = self.floating_clients.shift_remove(&window);
+        self.update_focus();
+        fc
+    }
+
     fn update_focus(&mut self) {
         if let Some(fs) = self.fullscreen
             && !self.set_focus(fs)
@@ -144,16 +228,23 @@ impl Workspace {
             self.fullscreen = None;
         }
 
-        if self.clients.is_empty() {
+        if self.clients.is_empty() && self.floating_clients.is_empty() {
             self.focus = None;
             return;
         }
 
         if !self.is_focus_valid() {
+            // Prefer first mapped tiled client, fall back to first mapped floating client.
             let new_focus = self
                 .iter_clients()
                 .find(|client| client.is_mapped())
-                .map(|client| client.window());
+                .map(|client| client.window())
+                .or_else(|| {
+                    self.floating_clients
+                        .values()
+                        .find(|fc| fc.is_mapped())
+                        .map(|fc| fc.window())
+                });
             self.focus = new_focus;
         }
     }
@@ -168,7 +259,7 @@ impl Workspace {
 
     fn is_focus_valid(&self) -> bool {
         self.focus
-            .map(|win| self.clients.contains_key(&win))
+            .map(|win| self.clients.contains_key(&win) || self.floating_clients.contains_key(&win))
             .unwrap_or(true)
     }
 
@@ -184,8 +275,16 @@ impl Workspace {
         self.clients.keys()
     }
 
+    pub fn iter_floating_windows(&self) -> impl Iterator<Item = &Window> {
+        self.floating_clients.keys()
+    }
+
     pub fn iter_clients(&self) -> impl Iterator<Item = &Client> {
         self.clients.values()
+    }
+
+    pub fn iter_floating_clients(&self) -> impl Iterator<Item = &FloatingClient> {
+        self.floating_clients.values()
     }
 
     pub fn index_of_window(&self, window: &Window) -> Option<usize> {
@@ -237,7 +336,7 @@ mod client_tests {
     #[test]
     fn test_weight_at_min_bound() {
         let window = Window::new(0);
-        let mut client = Client::new(window,1);
+        let mut client = Client::new(window, 1);
 
         client.decrease_window_size(2);
         assert_eq!(client.size(), 1);
@@ -246,7 +345,7 @@ mod client_tests {
     #[test]
     fn test_decrease_weight() {
         let window = Window::new(0);
-        let mut client = Client::new(window,5);
+        let mut client = Client::new(window, 5);
 
         client.decrease_window_size(2);
         assert_eq!(client.size(), 3);
@@ -255,7 +354,7 @@ mod client_tests {
     #[test]
     fn test_increase_weight() {
         let window = Window::new(0);
-        let mut client = Client::new(window,1);
+        let mut client = Client::new(window, 1);
 
         client.increase_window_size(1);
         assert_eq!(client.size(), 2);

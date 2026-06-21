@@ -61,5 +61,9 @@ pub enum Effect {
         grab_window: Window,
     },
     GrabButton(Window),
+    GrabButtonSuperMove(Window),
+    GrabButtonSuperResize(Window),
+    GrabPointer,
+    UngrabPointer,
     SubscribeEnterNotify(Window),
 }
