@@ -15,6 +15,8 @@ pub struct X11 {
 pub enum WindowType {
     /// Normal client windows the WM should manage (tile/focus/workspace).
     Managed,
+    /// Floating client windows: workspace-bound but free-positioned (dialogs, utilities, toggled).
+    Floating,
     /// Windows that manage themselves (override-redirect popups, menus, tooltips, etc).
     Unmanaged,
     /// Dock/panel windows (EWMH _NET_WM_WINDOW_TYPE_DOCK).
@@ -161,8 +163,21 @@ impl X11 {
             => grab_key(*keycode, *modifiers, *grab_window),
         Effect::GrabButton(window)
             => grab_button(*window),
+        Effect::GrabButtonSuperMove(window)
+            => grab_button_super_move(*window),
+        Effect::GrabButtonSuperResize(window)
+            => grab_button_super_resize(*window),
+        Effect::GrabPointer
+            => grab_pointer(),
+        Effect::UngrabPointer
+            => ungrab_pointer(),
         Effect::SubscribeEnterNotify(window)
             => subscribe_enter_notify(*window),
+        // Spawn is handled upstream in WindowManager::dispatch_effects and must
+        // never reach the X11 layer. The noop arm is a compile-time exhaustiveness
+        // guard so that adding the variant does not break the match.
+        Effect::Spawn(_)
+            => noop(),
     }
 
     // ── X11 request pairs ───────────────────────────────────────────────
@@ -349,6 +364,67 @@ impl X11 {
         }]
     }
 
+    x11_request! {
+        fn grab_button_super_move_unchecked / grab_button_super_move_checked(&self, window: Window)
+        => [x::GrabButton {
+            owner_events: false,
+            grab_window: window,
+            event_mask: x::EventMask::BUTTON_PRESS,
+            pointer_mode: x::GrabMode::Async,
+            keyboard_mode: x::GrabMode::Async,
+            confine_to: x::WINDOW_NONE,
+            cursor: x::CURSOR_NONE,
+            button: x::ButtonIndex::N1,
+            modifiers: crate::config::MOD,
+        }]
+    }
+
+    x11_request! {
+        fn grab_button_super_resize_unchecked / grab_button_super_resize_checked(&self, window: Window)
+        => [x::GrabButton {
+            owner_events: false,
+            grab_window: window,
+            event_mask: x::EventMask::BUTTON_PRESS,
+            pointer_mode: x::GrabMode::Async,
+            keyboard_mode: x::GrabMode::Async,
+            confine_to: x::WINDOW_NONE,
+            cursor: x::CURSOR_NONE,
+            button: x::ButtonIndex::N3,
+            modifiers: crate::config::MOD,
+        }]
+    }
+
+    // GrabPointer / UngrabPointer are not void requests in the same sense,
+    // so we implement them manually rather than through x11_request!.
+    fn grab_pointer_unchecked(&self) {
+        let _cookie = self.conn.send_request(&x::GrabPointer {
+            owner_events: false,
+            grab_window: self.root,
+            event_mask: x::EventMask::BUTTON_RELEASE | x::EventMask::POINTER_MOTION,
+            pointer_mode: x::GrabMode::Async,
+            keyboard_mode: x::GrabMode::Async,
+            confine_to: x::WINDOW_NONE,
+            cursor: x::CURSOR_NONE,
+            time: x::CURRENT_TIME,
+        });
+        // reply cookie is intentionally dropped (fire-and-forget)
+    }
+
+    fn grab_pointer_checked(&self) -> Vec<VoidCookieChecked> {
+        self.grab_pointer_unchecked();
+        vec![]
+    }
+
+    x11_request! {
+        fn ungrab_pointer_unchecked / ungrab_pointer_checked(&self)
+        => [x::UngrabPointer { time: x::CURRENT_TIME }]
+    }
+
+    fn noop_unchecked(&self) {}
+    fn noop_checked(&self) -> Vec<VoidCookieChecked> {
+        vec![]
+    }
+
     // ── Helpers (not macro-generated) ───────────────────────────────────
 
     fn wm_delete_client_message(&self, window: Window) -> x::ClientMessageEvent {
@@ -405,10 +481,11 @@ impl X11 {
             return WindowType::Dock;
         }
 
+        // Dialogs and utility windows are managed floating clients.
         if self.is_window_type(window, self.atoms.wm_window_type_dialog)
             || self.is_window_type(window, self.atoms.wm_window_type_utility)
         {
-            return WindowType::Unmanaged;
+            return WindowType::Floating;
         }
 
         match self.is_override_redirect(window) {
@@ -478,5 +555,79 @@ impl X11 {
         }
         error!("Failed to get Cardinal32 property for atom {prop:?} on {window:?}");
         None
+    }
+
+    /// Return the preferred (w, h) for a window before it is mapped.
+    ///
+    /// Priority:
+    ///   1. `GetGeometry` if the window already has a reasonable size (≥ 100×100).
+    ///   2. `WM_NORMAL_HINTS` PBaseSize, then PSize, then PMinSize.
+    ///   3. The supplied `default_w` / `default_h`.
+    pub fn get_preferred_size(&self, window: Window, default_w: u32, default_h: u32) -> (u32, u32) {
+        // 1. Existing geometry.
+        let geom_cookie = self.conn.send_request(&x::GetGeometry {
+            drawable: x::Drawable::Window(window),
+        });
+        if let Ok(geom) = self.conn.wait_for_reply(geom_cookie) {
+            let w = u32::from(geom.width());
+            let h = u32::from(geom.height());
+            if w >= 100 && h >= 100 {
+                return (w, h);
+            }
+        }
+
+        // 2. WM_NORMAL_HINTS.
+        // The WM_SIZE_HINTS structure is 18 × 32-bit words.
+        //   [0]      flags
+        //   [1..4]   x, y, width, height (obsolete)
+        //   [5..6]   min_width, min_height
+        //   [7..8]   max_width, max_height
+        //   [9..10]  width_inc, height_inc
+        //   [11..14] aspect ratios
+        //   [15..16] base_width, base_height
+        //   [17]     win_gravity
+        const P_SIZE: u32 = 1 << 3; // program-specified size (fields [3],[4])
+        const P_MIN_SIZE: u32 = 1 << 4; // min size (fields [5],[6])
+        const P_BASE_SIZE: u32 = 1 << 8; // base size (fields [15],[16])
+
+        let hints_cookie = self.conn.send_request(&x::GetProperty {
+            delete: false,
+            window,
+            property: self.atoms.wm_normal_hints,
+            r#type: self.atoms.wm_size_hints,
+            long_offset: 0,
+            long_length: 18,
+        });
+
+        if let Ok(reply) = self.conn.wait_for_reply(hints_cookie) {
+            let v: &[u32] = reply.value();
+            if v.len() >= 17 {
+                let flags = v[0];
+
+                if flags & P_BASE_SIZE != 0 {
+                    let bw = v[15];
+                    let bh = v[16];
+                    if bw >= 50 && bh >= 50 {
+                        return (bw, bh);
+                    }
+                }
+                if flags & P_SIZE != 0 {
+                    let pw = v[3];
+                    let ph = v[4];
+                    if pw >= 50 && ph >= 50 {
+                        return (pw, ph);
+                    }
+                }
+                if flags & P_MIN_SIZE != 0 {
+                    let mw = v[5];
+                    let mh = v[6];
+                    if mw >= 50 && mh >= 50 {
+                        return (mw, mh);
+                    }
+                }
+            }
+        }
+
+        (default_w, default_h)
     }
 }

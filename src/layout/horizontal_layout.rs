@@ -315,9 +315,13 @@ mod tests {
         assert_eq!(rects[0].x, 0);
         assert_eq!(rects[0].w, 503);
         // Window 1 must start no earlier than where window 0 ends
-        assert!(rects[1].x as u32 >= rects[0].x as u32 + rects[0].w,
+        assert!(
+            rects[1].x as u32 >= rects[0].x as u32 + rects[0].w,
             "windows overlap: w0=[{}, {}), w1 starts at {}",
-            rects[0].x, rects[0].x as u32 + rects[0].w, rects[1].x);
+            rects[0].x,
+            rects[0].x as u32 + rects[0].w,
+            rects[1].x
+        );
         assert_eq!(rects[1].x, 503);
         assert_eq!(rects[1].w, 503);
     }
@@ -330,9 +334,13 @@ mod tests {
         // Window 1: cell=5, x=(10*3)/6=5, spans [5,10)
         let rects = HorizontalLayout.generate_layout(area(10, 100), &[3, 3], 0, 0);
         assert_eq!(rects.len(), 2);
-        assert!(rects[1].x as u32 >= rects[0].x as u32 + rects[0].w,
+        assert!(
+            rects[1].x as u32 >= rects[0].x as u32 + rects[0].w,
             "windows overlap: w0=[{}, {}), w1 starts at {}",
-            rects[0].x, rects[0].x as u32 + rects[0].w, rects[1].x);
+            rects[0].x,
+            rects[0].x as u32 + rects[0].w,
+            rects[1].x
+        );
     }
 
     // ── pad clamp edge case (very small cell) ───────────────────────

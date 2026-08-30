@@ -10,9 +10,13 @@ pub const DEFAULT_WINDOW_GAP: u32 = 0;
 pub const DEFAULT_DOCK_HEIGHT: u32 = 30;
 pub const DEFAULT_LAYOUT: LayoutType = LayoutType::HorizontalLayout;
 pub const DEFAULT_WINDOW_WEIGHT: u32 = 100;
+pub const DEFAULT_FLOAT_WIDTH: u32 = 800;
+pub const DEFAULT_FLOAT_HEIGHT: u32 = 600;
+pub const MIN_FLOAT_WIDTH: u32 = 100;
+pub const MIN_FLOAT_HEIGHT: u32 = 50;
 
 const TESTING: Option<&str> = option_env!("WM_TESTING");
-const MOD: ModMask = if TESTING.is_none() {
+pub const MOD: ModMask = if TESTING.is_none() {
     ModMask::N4
 } else {
     ModMask::N1
@@ -34,10 +38,9 @@ macro_rules! binding {
 pub static ACTION_MAPPINGS: &[ActionMapping] = &[
     // ==================== SPAWN BINDINGS ====================
     binding!(xkb::Keysym::Return, [MOD], ActionEvent::Spawn("alacritty")),
-    binding!(xkb::Keysym::Return, [MOD, SHIFT], ActionEvent::Spawn("google-chrome-stable")),
+    binding!(xkb::Keysym::Return, [MOD, SHIFT], ActionEvent::Spawn("zen-browser")),
     binding!(xkb::Keysym::s, [MOD, SHIFT], ActionEvent::Spawn("flameshot gui")),
     binding!(xkb::Keysym::space, [MOD], ActionEvent::Spawn("rofi -show drun")),
-    binding!(xkb::Keysym::r, [MOD,SHIFT], ActionEvent::Spawn("pkill -x FerrisWM")), // Reload the WM
     binding!(xkb::Keysym::r, [MOD,SHIFT], ActionEvent::Spawn("pkill -x FerrisWM")), // Reload the WM
 
 
@@ -52,6 +55,7 @@ pub static ACTION_MAPPINGS: &[ActionMapping] = &[
     // ==================== WINDOW MANAGEMENT ====================
     binding!(xkb::Keysym::q, [MOD], ActionEvent::Kill),
     binding!(xkb::Keysym::f, [MOD], ActionEvent::ToggleFullscreen),
+    binding!(xkb::Keysym::f, [MOD, SHIFT], ActionEvent::ToggleFloating),
     binding!(xkb::Keysym::v, [MOD], ActionEvent::CycleLayout),
     binding!(xkb::Keysym::Left, [MOD], ActionEvent::PrevWindow),
     binding!(xkb::Keysym::Right, [MOD], ActionEvent::NextWindow),

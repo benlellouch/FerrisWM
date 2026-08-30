@@ -10,7 +10,8 @@ use xcb::{
 
 use crate::atoms::Atoms;
 use crate::config::{
-    DEFAULT_BORDER_WIDTH, DEFAULT_DOCK_HEIGHT, DEFAULT_WINDOW_GAP, NUM_WORKSPACES,
+    DEFAULT_BORDER_WIDTH, DEFAULT_DOCK_HEIGHT, DEFAULT_FLOAT_HEIGHT, DEFAULT_FLOAT_WIDTH,
+    DEFAULT_WINDOW_GAP, MIN_FLOAT_HEIGHT, MIN_FLOAT_WIDTH, NUM_WORKSPACES,
 };
 use crate::effect::{Effect, Effects};
 use crate::ewmh_manager::EwmhManager;
@@ -19,11 +20,33 @@ use crate::keyboard::{fetch_keyboard_mapping, populate_key_bindings};
 use crate::state::{ScreenConfig, State};
 use crate::x11::{WindowType, X11};
 
+#[derive(Debug, Clone, Copy)]
+enum DragOp {
+    Move,
+    Resize,
+}
+
+/// State kept while a Super+drag is in progress.
+#[derive(Debug)]
+struct DragState {
+    window: Window,
+    op: DragOp,
+    /// Pointer root-coordinates at the moment the drag started.
+    start_ptr_x: i16,
+    start_ptr_y: i16,
+    /// Window geometry at the moment the drag started.
+    start_win_x: i32,
+    start_win_y: i32,
+    start_win_w: u32,
+    start_win_h: u32,
+}
+
 pub struct WindowManager {
     x11: X11,
     ewmh: EwmhManager,
     key_bindings: HashMap<(u8, ModMask), ActionEvent>,
     state: State,
+    drag: Option<DragState>,
 }
 
 impl WindowManager {
@@ -52,6 +75,7 @@ impl WindowManager {
             ewmh,
             key_bindings,
             state,
+            drag: None,
         };
 
         wm.x11.set_root_event_mask()?;
@@ -120,6 +144,19 @@ impl WindowManager {
         effects
     }
 
+    /// Dispatch a slice of effects: `Spawn` effects are executed directly;
+    /// all other effects are forwarded to the X11 layer.
+    fn dispatch_effects(&self, effects: &[Effect]) {
+        let mut x11_effects = Vec::with_capacity(effects.len());
+        for effect in effects {
+            match effect {
+                Effect::Spawn(cmd) => self.spawn_client(cmd),
+                _ => x11_effects.push(effect.clone()),
+            }
+        }
+        self.x11.apply_effects_unchecked(&x11_effects);
+    }
+
     fn setup_root(conn: &Connection) -> (ScreenConfig, Window) {
         let root = conn.get_setup().roots().next().expect("Cannot find root");
         let screen = ScreenConfig {
@@ -163,7 +200,12 @@ impl WindowManager {
             command.arg(arg);
         }
 
-        match command.spawn() {
+        match command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
             Ok(_) => info!("Successfully spawned: {cmd}"),
             Err(e) => error!("Failed to spawn {cmd}: {e:?}"),
         }
@@ -196,6 +238,80 @@ impl WindowManager {
         }
     }
 
+    fn handle_button_press(&mut self, ev: &x::ButtonPressEvent) -> Effects {
+        let window = ev.event();
+        let button = ev.detail();
+        let mods = ModMask::from_bits_truncate(ev.state().bits());
+        let super_held = mods.contains(crate::config::MOD);
+
+        if super_held && self.state.is_window_floating(window) {
+            let op = if button == 1 {
+                DragOp::Move
+            } else {
+                DragOp::Resize
+            };
+
+            // Fetch stored geometry for the drag baseline.
+            if let Some(ws_id) = self.state.window_workspace(window) {
+                if let Some(fc) = self
+                    .state
+                    .get_workspace(ws_id)
+                    .and_then(|ws| ws.get_floating_client(window))
+                {
+                    self.drag = Some(DragState {
+                        window,
+                        op,
+                        start_ptr_x: ev.root_x(),
+                        start_ptr_y: ev.root_y(),
+                        start_win_x: fc.x,
+                        start_win_y: fc.y,
+                        start_win_w: fc.w,
+                        start_win_h: fc.h,
+                    });
+
+                    let mut effects = self.state.set_focus(window);
+                    effects.extend(self.ewmh_sync_effects());
+                    effects.push(Effect::GrabPointer);
+                    return effects;
+                }
+            }
+        }
+
+        // Default: focus on click and replay the pointer event to the application.
+        self.x11.allow_events();
+        let mut effects = self.state.set_focus(window);
+        effects.extend(self.ewmh_sync_effects());
+        effects
+    }
+
+    /// Compute the `ConfigurePositionSize` effect for an in-progress drag.
+    fn compute_drag_effects(drag: &DragState, ptr_x: i16, ptr_y: i16) -> Effects {
+        let dx = (ptr_x - drag.start_ptr_x) as i32;
+        let dy = (ptr_y - drag.start_ptr_y) as i32;
+
+        let (x, y, w, h) = match drag.op {
+            DragOp::Move => (
+                drag.start_win_x + dx,
+                drag.start_win_y + dy,
+                drag.start_win_w,
+                drag.start_win_h,
+            ),
+            DragOp::Resize => {
+                let new_w = (drag.start_win_w as i32 + dx).max(MIN_FLOAT_WIDTH as i32) as u32;
+                let new_h = (drag.start_win_h as i32 + dy).max(MIN_FLOAT_HEIGHT as i32) as u32;
+                (drag.start_win_x, drag.start_win_y, new_w, new_h)
+            }
+        };
+
+        vec![Effect::ConfigurePositionSize {
+            window: drag.window,
+            x,
+            y,
+            w,
+            h,
+        }]
+    }
+
     fn handle_key_press(&mut self, ev: &x::KeyPressEvent) -> Effects {
         let keycode = ev.detail();
         let modifiers = ModMask::from_bits_truncate(ev.state().bits());
@@ -206,16 +322,28 @@ impl WindowManager {
         };
 
         match action {
-            ActionEvent::Spawn(cmd) => {
-                self.spawn_client(cmd);
-                vec![]
-            }
+            ActionEvent::Spawn(cmd) => vec![Effect::Spawn(cmd)],
             ActionEvent::Kill => {
                 let Some(window) = self.state.focused_window() else {
                     return vec![];
                 };
 
                 self.close_window(window)
+            }
+            ActionEvent::ToggleFloating => {
+                let (pref_w, pref_h) = self
+                    .state
+                    .focused_window()
+                    .filter(|&w| !self.state.is_window_floating(w))
+                    .map(|w| {
+                        self.x11
+                            .get_preferred_size(w, DEFAULT_FLOAT_WIDTH, DEFAULT_FLOAT_HEIGHT)
+                    })
+                    .unwrap_or((DEFAULT_FLOAT_WIDTH, DEFAULT_FLOAT_HEIGHT));
+
+                let mut effects = self.state.toggle_floating(pref_w, pref_h);
+                effects.extend(self.ewmh_sync_effects());
+                effects
             }
             _ => {
                 let mut effects = self.state.apply_action(*action);
@@ -291,6 +419,23 @@ impl WindowManager {
                                     .track_startup_managed(window, workspace_id as usize);
                             }
                         }
+                        WindowType::Floating => {
+                            let ws_id = self
+                                .ewmh
+                                .get_window_desktop(&self.x11, window)
+                                .map(|d| d as usize)
+                                .filter(|&id| id < NUM_WORKSPACES)
+                                .unwrap_or(0);
+                            let (w, h) = self.x11.get_preferred_size(
+                                window,
+                                DEFAULT_FLOAT_WIDTH,
+                                DEFAULT_FLOAT_HEIGHT,
+                            );
+                            let screen = self.state.screen();
+                            let x = ((screen.width.saturating_sub(w)) / 2) as i32;
+                            let y = ((screen.height.saturating_sub(h)) / 2) as i32;
+                            self.state.track_startup_floating(window, ws_id, x, y, w, h);
+                        }
                         WindowType::Unmanaged => {
                             continue;
                         }
@@ -325,18 +470,33 @@ impl WindowManager {
                 xcb::Event::X(x::Event::KeyPress(ev)) => {
                     debug!("Received KeyPress event: {ev:?}");
                     let effects = self.handle_key_press(&ev);
-                    self.x11.apply_effects_unchecked(&effects);
+                    self.dispatch_effects(&effects);
                 }
                 xcb::Event::X(x::Event::MapRequest(ev)) => {
                     debug!("Received MapRequest event for {:?}", ev.window());
-                    let wt = self.x11.classify_window(ev.window());
-                    debug!("Window type {wt:?} for window {:?}", ev.window());
-                    let mut effects = self.state.on_map_request(ev.window(), wt);
+                    let window = ev.window();
+                    let wt = self.x11.classify_window(window);
+                    debug!("Window type {wt:?} for window {:?}", window);
+                    let mut effects = if wt == WindowType::Floating {
+                        let (w, h) = self.x11.get_preferred_size(
+                            window,
+                            DEFAULT_FLOAT_WIDTH,
+                            DEFAULT_FLOAT_HEIGHT,
+                        );
+                        self.state.on_map_request_floating(window, w, h)
+                    } else {
+                        self.state.on_map_request(window, wt)
+                    };
                     effects.extend(self.ewmh_sync_effects());
                     self.x11.apply_effects_unchecked(&effects);
                 }
                 xcb::Event::X(x::Event::DestroyNotify(ev)) => {
                     debug!("Received DestroyNotify event for  {:?}", ev.window());
+                    // If the destroyed window was being dragged, cancel the drag.
+                    if self.drag.as_ref().is_some_and(|d| d.window == ev.window()) {
+                        self.drag = None;
+                        self.x11.apply_effects_unchecked(&[Effect::UngrabPointer]);
+                    }
                     let mut effects = self.state.on_destroy(ev.window());
                     effects.extend(self.ewmh_sync_effects());
                     self.x11.apply_effects_unchecked(&effects);
@@ -354,10 +514,27 @@ impl WindowManager {
                 }
                 xcb::Event::X(x::Event::ButtonPress(ev)) => {
                     debug!("Received ButtonPress event for {:?}", ev.event());
-                    self.x11.allow_events();
-                    let mut effects = self.state.set_focus(ev.event());
-                    effects.extend(self.ewmh_sync_effects());
+                    let effects = self.handle_button_press(&ev);
                     self.x11.apply_effects_unchecked(&effects);
+                }
+                xcb::Event::X(x::Event::MotionNotify(ev)) => {
+                    if let Some(drag) = &self.drag {
+                        let effects = Self::compute_drag_effects(drag, ev.root_x(), ev.root_y());
+                        // Keep stored geometry in sync so workspace switches preserve the position.
+                        if let Some(Effect::ConfigurePositionSize { window, x, y, w, h }) =
+                            effects.get(0)
+                        {
+                            self.state.update_floating_geometry(*window, *x, *y, *w, *h);
+                        }
+                        self.x11.apply_effects_unchecked(&effects);
+                    }
+                }
+                xcb::Event::X(x::Event::ButtonRelease(ev)) => {
+                    debug!("Received ButtonRelease event for {:?}", ev.event());
+                    if self.drag.is_some() {
+                        self.drag = None;
+                        self.x11.apply_effects_unchecked(&[Effect::UngrabPointer]);
+                    }
                 }
                 xcb::Event::X(x::Event::EnterNotify(ev)) => {
                     debug!("Received EnterNotify event for {:?}", ev.event());
@@ -402,6 +579,7 @@ mod window_manager_tests {
             ewmh,
             key_bindings: HashMap::new(),
             state,
+            drag: None,
         })
     }
 
