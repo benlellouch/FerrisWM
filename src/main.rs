@@ -11,6 +11,14 @@ mod workspace;
 mod x11;
 
 fn main() {
+    // SAFETY: called once at startup before any threads are spawned and before any
+    // signal handlers are installed. Setting SIGCHLD to SIG_IGN instructs the kernel
+    // to reap child processes automatically, preventing spawned clients from
+    // accumulating as zombies in the WM's process table.
+    unsafe {
+        libc::signal(libc::SIGCHLD, libc::SIG_IGN);
+    }
+
     env_logger::init();
 
     match window_manager::WindowManager::new() {

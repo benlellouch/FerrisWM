@@ -144,6 +144,19 @@ impl WindowManager {
         effects
     }
 
+    /// Dispatch a slice of effects: `Spawn` effects are executed directly;
+    /// all other effects are forwarded to the X11 layer.
+    fn dispatch_effects(&self, effects: &[Effect]) {
+        let mut x11_effects = Vec::with_capacity(effects.len());
+        for effect in effects {
+            match effect {
+                Effect::Spawn(cmd) => self.spawn_client(cmd),
+                _ => x11_effects.push(effect.clone()),
+            }
+        }
+        self.x11.apply_effects_unchecked(&x11_effects);
+    }
+
     fn setup_root(conn: &Connection) -> (ScreenConfig, Window) {
         let root = conn.get_setup().roots().next().expect("Cannot find root");
         let screen = ScreenConfig {
@@ -187,7 +200,12 @@ impl WindowManager {
             command.arg(arg);
         }
 
-        match command.spawn() {
+        match command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
             Ok(_) => info!("Successfully spawned: {cmd}"),
             Err(e) => error!("Failed to spawn {cmd}: {e:?}"),
         }
@@ -224,16 +242,20 @@ impl WindowManager {
         let window = ev.event();
         let button = ev.detail();
         let mods = ModMask::from_bits_truncate(ev.state().bits());
-        let super_held = mods.contains(ModMask::N4);
+        let super_held = mods.contains(crate::config::MOD);
 
         if super_held && self.state.is_window_floating(window) {
-            let op = if button == 1 { DragOp::Move } else { DragOp::Resize };
+            let op = if button == 1 {
+                DragOp::Move
+            } else {
+                DragOp::Resize
+            };
 
             // Fetch stored geometry for the drag baseline.
             if let Some(ws_id) = self.state.window_workspace(window) {
                 if let Some(fc) = self
                     .state
-                    .get_workspace_pub(ws_id)
+                    .get_workspace(ws_id)
                     .and_then(|ws| ws.get_floating_client(window))
                 {
                     self.drag = Some(DragState {
@@ -275,10 +297,8 @@ impl WindowManager {
                 drag.start_win_h,
             ),
             DragOp::Resize => {
-                let new_w = (drag.start_win_w as i32 + dx)
-                    .max(MIN_FLOAT_WIDTH as i32) as u32;
-                let new_h = (drag.start_win_h as i32 + dy)
-                    .max(MIN_FLOAT_HEIGHT as i32) as u32;
+                let new_w = (drag.start_win_w as i32 + dx).max(MIN_FLOAT_WIDTH as i32) as u32;
+                let new_h = (drag.start_win_h as i32 + dy).max(MIN_FLOAT_HEIGHT as i32) as u32;
                 (drag.start_win_x, drag.start_win_y, new_w, new_h)
             }
         };
@@ -302,10 +322,7 @@ impl WindowManager {
         };
 
         match action {
-            ActionEvent::Spawn(cmd) => {
-                self.spawn_client(cmd);
-                vec![]
-            }
+            ActionEvent::Spawn(cmd) => vec![Effect::Spawn(cmd)],
             ActionEvent::Kill => {
                 let Some(window) = self.state.focused_window() else {
                     return vec![];
@@ -319,7 +336,8 @@ impl WindowManager {
                     .focused_window()
                     .filter(|&w| !self.state.is_window_floating(w))
                     .map(|w| {
-                        self.x11.get_preferred_size(w, DEFAULT_FLOAT_WIDTH, DEFAULT_FLOAT_HEIGHT)
+                        self.x11
+                            .get_preferred_size(w, DEFAULT_FLOAT_WIDTH, DEFAULT_FLOAT_HEIGHT)
                     })
                     .unwrap_or((DEFAULT_FLOAT_WIDTH, DEFAULT_FLOAT_HEIGHT));
 
@@ -416,8 +434,7 @@ impl WindowManager {
                             let screen = self.state.screen();
                             let x = ((screen.width.saturating_sub(w)) / 2) as i32;
                             let y = ((screen.height.saturating_sub(h)) / 2) as i32;
-                            self.state
-                                .track_startup_floating(window, ws_id, x, y, w, h);
+                            self.state.track_startup_floating(window, ws_id, x, y, w, h);
                         }
                         WindowType::Unmanaged => {
                             continue;
@@ -453,7 +470,7 @@ impl WindowManager {
                 xcb::Event::X(x::Event::KeyPress(ev)) => {
                     debug!("Received KeyPress event: {ev:?}");
                     let effects = self.handle_key_press(&ev);
-                    self.x11.apply_effects_unchecked(&effects);
+                    self.dispatch_effects(&effects);
                 }
                 xcb::Event::X(x::Event::MapRequest(ev)) => {
                     debug!("Received MapRequest event for {:?}", ev.window());
@@ -504,8 +521,10 @@ impl WindowManager {
                     if let Some(drag) = &self.drag {
                         let effects = Self::compute_drag_effects(drag, ev.root_x(), ev.root_y());
                         // Keep stored geometry in sync so workspace switches preserve the position.
-                        if let Effect::ConfigurePositionSize { window, x, y, w, h } = effects[0] {
-                            self.state.update_floating_geometry(window, x, y, w, h);
+                        if let Some(Effect::ConfigurePositionSize { window, x, y, w, h }) =
+                            effects.get(0)
+                        {
+                            self.state.update_floating_geometry(*window, *x, *y, *w, *h);
                         }
                         self.x11.apply_effects_unchecked(&effects);
                     }

@@ -173,6 +173,11 @@ impl X11 {
             => ungrab_pointer(),
         Effect::SubscribeEnterNotify(window)
             => subscribe_enter_notify(*window),
+        // Spawn is handled upstream in WindowManager::dispatch_effects and must
+        // never reach the X11 layer. The noop arm is a compile-time exhaustiveness
+        // guard so that adding the variant does not break the match.
+        Effect::Spawn(_)
+            => noop(),
     }
 
     // ── X11 request pairs ───────────────────────────────────────────────
@@ -370,7 +375,7 @@ impl X11 {
             confine_to: x::WINDOW_NONE,
             cursor: x::CURSOR_NONE,
             button: x::ButtonIndex::N1,
-            modifiers: x::ModMask::N4,
+            modifiers: crate::config::MOD,
         }]
     }
 
@@ -385,7 +390,7 @@ impl X11 {
             confine_to: x::WINDOW_NONE,
             cursor: x::CURSOR_NONE,
             button: x::ButtonIndex::N3,
-            modifiers: x::ModMask::N4,
+            modifiers: crate::config::MOD,
         }]
     }
 
@@ -413,6 +418,11 @@ impl X11 {
     x11_request! {
         fn ungrab_pointer_unchecked / ungrab_pointer_checked(&self)
         => [x::UngrabPointer { time: x::CURRENT_TIME }]
+    }
+
+    fn noop_unchecked(&self) {}
+    fn noop_checked(&self) -> Vec<VoidCookieChecked> {
+        vec![]
     }
 
     // ── Helpers (not macro-generated) ───────────────────────────────────
@@ -553,12 +563,7 @@ impl X11 {
     ///   1. `GetGeometry` if the window already has a reasonable size (≥ 100×100).
     ///   2. `WM_NORMAL_HINTS` PBaseSize, then PSize, then PMinSize.
     ///   3. The supplied `default_w` / `default_h`.
-    pub fn get_preferred_size(
-        &self,
-        window: Window,
-        default_w: u32,
-        default_h: u32,
-    ) -> (u32, u32) {
+    pub fn get_preferred_size(&self, window: Window, default_w: u32, default_h: u32) -> (u32, u32) {
         // 1. Existing geometry.
         let geom_cookie = self.conn.send_request(&x::GetGeometry {
             drawable: x::Drawable::Window(window),
@@ -581,9 +586,9 @@ impl X11 {
         //   [11..14] aspect ratios
         //   [15..16] base_width, base_height
         //   [17]     win_gravity
-        const P_SIZE: u32 = 1 << 3;       // program-specified size (fields [3],[4])
-        const P_MIN_SIZE: u32 = 1 << 4;   // min size (fields [5],[6])
-        const P_BASE_SIZE: u32 = 1 << 8;  // base size (fields [15],[16])
+        const P_SIZE: u32 = 1 << 3; // program-specified size (fields [3],[4])
+        const P_MIN_SIZE: u32 = 1 << 4; // min size (fields [5],[6])
+        const P_BASE_SIZE: u32 = 1 << 8; // base size (fields [15],[16])
 
         let hints_cookie = self.conn.send_request(&x::GetProperty {
             delete: false,

@@ -16,7 +16,7 @@ pub const MIN_FLOAT_WIDTH: u32 = 100;
 pub const MIN_FLOAT_HEIGHT: u32 = 50;
 
 const TESTING: Option<&str> = option_env!("WM_TESTING");
-const MOD: ModMask = if TESTING.is_none() {
+pub const MOD: ModMask = if TESTING.is_none() {
     ModMask::N4
 } else {
     ModMask::N1
@@ -38,10 +38,9 @@ macro_rules! binding {
 pub static ACTION_MAPPINGS: &[ActionMapping] = &[
     // ==================== SPAWN BINDINGS ====================
     binding!(xkb::Keysym::Return, [MOD], ActionEvent::Spawn("alacritty")),
-    binding!(xkb::Keysym::Return, [MOD, SHIFT], ActionEvent::Spawn("google-chrome-stable")),
+    binding!(xkb::Keysym::Return, [MOD, SHIFT], ActionEvent::Spawn("zen-browser")),
     binding!(xkb::Keysym::s, [MOD, SHIFT], ActionEvent::Spawn("flameshot gui")),
     binding!(xkb::Keysym::space, [MOD], ActionEvent::Spawn("rofi -show drun")),
-    binding!(xkb::Keysym::r, [MOD,SHIFT], ActionEvent::Spawn("pkill -x FerrisWM")), // Reload the WM
     binding!(xkb::Keysym::r, [MOD,SHIFT], ActionEvent::Spawn("pkill -x FerrisWM")), // Reload the WM
 
 

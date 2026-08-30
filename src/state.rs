@@ -112,11 +112,7 @@ impl State {
             .expect("Workspace should never be out of bounds")
     }
 
-    fn get_workspace(&self, workspace_id: usize) -> Option<&Workspace> {
-        self.workspaces.get(workspace_id)
-    }
-
-    pub fn get_workspace_pub(&self, workspace_id: usize) -> Option<&Workspace> {
+    pub(crate) fn get_workspace(&self, workspace_id: usize) -> Option<&Workspace> {
         self.workspaces.get(workspace_id)
     }
 
@@ -191,19 +187,16 @@ impl State {
                     self.window_gap,
                 );
 
-                effects.extend(
-                    clients
-                        .iter()
-                        .zip(layout)
-                        .map(|(client, rect)| Effect::Configure {
-                            window: client.window(),
-                            x: rect.x,
-                            y: rect.y,
-                            w: rect.w,
-                            h: rect.h,
-                            border: self.border_width,
-                        }),
-                );
+                effects.extend(clients.iter().zip(layout).map(|(client, rect)| {
+                    Effect::Configure {
+                        window: client.window(),
+                        x: rect.x,
+                        y: rect.y,
+                        w: rect.w,
+                        h: rect.h,
+                        border: self.border_width,
+                    }
+                }));
             }
 
             // Floating windows sit above tiled windows and keep their own geometry.
@@ -852,14 +845,7 @@ impl State {
     }
 
     /// Update the stored geometry of a floating window (called during drag).
-    pub fn update_floating_geometry(
-        &mut self,
-        window: Window,
-        x: i32,
-        y: i32,
-        w: u32,
-        h: u32,
-    ) {
+    pub fn update_floating_geometry(&mut self, window: Window, x: i32, y: i32, w: u32, h: u32) {
         if let Some(ws_id) = self.window_workspace(window)
             && let Some(ws) = self.get_workspace_mut(ws_id)
             && let Some(fc) = ws.get_floating_client_mut(window)
@@ -937,7 +923,9 @@ impl State {
         }
 
         if let Some(workspace_id) = current_desktop {
-            self.current_workspace = (workspace_id + 1) % NUM_WORKSPACES;
+            // go_to_workspace skips when current == target, which is correct: if the
+            // saved desktop is 0 (the default) we are already there, so a no-op is right.
+            // For any other workspace it performs the transition from workspace 0.
             effects.extend(self.go_to_workspace(workspace_id));
             return effects;
         }

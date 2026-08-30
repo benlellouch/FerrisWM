@@ -55,6 +55,8 @@ pub enum Effect {
     },
     KillClient(Window),
     SendWmDelete(Window),
+    /// Spawn an external process by shell-splitting the command string.
+    Spawn(&'static str),
     GrabKey {
         keycode: u8,
         modifiers: ModMask,

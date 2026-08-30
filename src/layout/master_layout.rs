@@ -13,8 +13,8 @@ impl Layout for MasterLayout {
         let total_border = border_width + (window_gap / 2);
         let mut prev_x: u32 = window_gap;
         let mut prev_y: u32 = window_gap;
-        let mut prev_h: u32 = area.h - window_gap;
-        let mut prev_w: u32 = area.w - window_gap;
+        let mut prev_h: u32 = area.h.saturating_sub(window_gap);
+        let mut prev_w: u32 = area.w.saturating_sub(window_gap);
         let layout: Vec<Rect> = weights
             .iter()
             .enumerate()
